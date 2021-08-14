@@ -49,7 +49,7 @@
 (define-generics continuation-expr
   (continuation-expr-continue-eval continuation-expr val))
 
-; Positive types
+; Positive types.
 (define-generics type+
   (type+-continue-eval type+ val))
 
@@ -68,12 +68,9 @@
 (struct continuation-expr-apply (env args next)
   #:transparent
   #:methods gen:continuation-expr
-  [(define/generic continuation-expr-continue-eval-
-     continuation-expr-continue-eval)
-   (define (continuation-expr-continue-eval cont val)
+  [(define (continuation-expr-continue-eval cont val)
      (match-define (continuation-expr-apply apply-env args next) cont)
-     (continuation-expr-continue-eval- next
-       (fexpress-apply apply-env next val args)))])
+     (fexpress-apply apply-env next val args))])
 
 (struct makeshift-fexpr (macroexpand apply) #:transparent
   #:methods gen:fexpr
@@ -107,10 +104,11 @@
      (unless (and (list? args)
                   (procedure-arity-includes? op (length args)))
        (error "Wrong number of arguments to a procedure"))
-     (apply op
-       (for/list ([arg (in-list args)])
-         (fexpress-eval env (continuation-expr-done (any-value/t+))
-                        arg)))]
+     (continuation-expr-continue-eval cont
+       (apply op
+         (for/list ([arg (in-list args)])
+           (fexpress-eval env (continuation-expr-done (any-value/t+))
+                          arg))))]
     [#t (error "Uncallable value")]))
 
 (struct compilation-result (depends-on-env? free-vars expr))
@@ -218,16 +216,18 @@
     (lambda (env cont args)
       (match-define (parsed-lambda-args n arg-vars body)
         (parse-lambda-args args))
-      (lambda arg-values
-        (unless (equal? n (length arg-values))
-          (error "ilambda: wrong number of arguments at call time"))
-        (define local-env
-          (for/fold ([env env])
-                    ([arg-var (in-list arg-vars)]
-                     [arg-value (in-list arg-values)])
-            (hash-set env arg-var arg-value)))
-        (fexpress-eval
-          local-env (continuation-expr-done (any-value/t+)) body)))))
+      (continuation-expr-continue-eval cont
+        (lambda arg-values
+          (unless (equal? n (length arg-values))
+            (error "ilambda: wrong number of arguments at call time"))
+          (define local-env
+            (for/fold ([env env])
+                      ([arg-var (in-list arg-vars)]
+                       [arg-value (in-list arg-values)])
+              (hash-set env arg-var arg-value)))
+          (fexpress-eval local-env
+                         (continuation-expr-done (any-value/t+))
+                         body))))))
 
 (define (compile-clambda macro-env local-env args)
   (match-define (parsed-lambda-args n arg-vars body)
@@ -288,9 +288,10 @@
       (define lambda-maker
         (eval lambda-maker-compiled
               (namespace-anchor->namespace here)))
-      (apply lambda-maker env
-        (for/list ([free-var (in-list free-vars-list)])
-          (environment-get env free-var))))))
+      (continuation-expr-continue-eval cont
+        (apply lambda-maker env
+          (for/list ([free-var (in-list free-vars-list)])
+            (environment-get env free-var)))))))
 
 (define (fexpress-make-base-env)
   (hash 'eval fexpress-eval
