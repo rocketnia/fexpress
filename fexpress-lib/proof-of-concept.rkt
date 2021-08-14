@@ -26,7 +26,7 @@
 ; TODO: Figure out a better way to make this conditional than
 ; commenting it out.
 ;(require (only-in racket/pretty pretty-print))
-(require (only-in racket/generic define/generic define-generics))
+(require (only-in racket/generic define-generics))
 (require (only-in racket/hash hash-union))
 (require (only-in racket/syntax format-symbol))
 
