@@ -1,0 +1,6 @@
+# Added by raco when building the package.
+compiled/
+doc/
+
+# Added by DrRacket.
+*.bak

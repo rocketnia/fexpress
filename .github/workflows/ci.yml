@@ -1,0 +1,57 @@
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        racket-variant: ["BC", "CS"]
+        racket-version: ["8.0", "stable", "current"]
+        include:
+          - package: fexpress
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+      - name: Install Racket '${{ matrix.racket-version }}'
+        uses: Bogdanp/setup-racket@v1.1
+        with:
+          architecture: x64
+          distribution: full
+          variant: ${{ matrix.racket-variant }}
+          version: ${{ matrix.racket-version }}
+
+      # We install each package directory as a linked package, and we
+      # automatically fetch all the dependencies. We don't build the
+      # docs yet; we'll do that later when we're recompiling the
+      # project to check its dependencies.
+      - name: Install `${{ matrix.package }}-lib` and its dependencies
+        run: raco pkg install --auto --no-docs --batch --link "./${{ matrix.package }}-lib/"
+      - name: Install `${{ matrix.package }}-doc` and its dependencies
+        run: raco pkg install --auto --no-docs --batch --link "./${{ matrix.package }}-doc/"
+      - name: Install `${{ matrix.package }}-test` and its dependencies
+        run: raco pkg install --auto --no-docs --batch --link "./${{ matrix.package }}-test/"
+      # The main package must be installed after the `...-doc` and
+      # `...-test` packages. Otherwise, it'll install stale copies of
+      # them from from the Racket package index.
+      - name: Install `${{ matrix.package }}` and its dependencies
+        run: raco pkg install --auto --no-docs --batch --link "./${{ matrix.package }}/"
+
+      # We recompile the collection (the single collection which all
+      # these packages populate) and check that the package
+      # dependencies declared in each info.rkt are correct.
+      - name: Recompile to check dependencies, and build documentation
+        run: raco setup --check-pkg-deps --unused-pkg-deps "${{ matrix.package }}"
+
+      # We run tests according to the way the DrDr continuous testing
+      # system does. This imitates the settings used by the Racket
+      # package index at <https://pkgs.racket-lang.org/>.
+      - name: Test `${{ matrix.package }}-lib`
+        run: raco test --drdr --package "${{ matrix.package }}-lib"
+      - name: Test `${{ matrix.package }}-doc`
+        run: raco test --drdr --package "${{ matrix.package }}-doc"
+      - name: Test `${{ matrix.package }}-test`
+        run: raco test --drdr --package "${{ matrix.package }}-test"
+      - name: Test `${{ matrix.package }}`
+        run: raco test --drdr --package "${{ matrix.package }}"
