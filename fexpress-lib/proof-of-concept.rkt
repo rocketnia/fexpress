@@ -235,8 +235,8 @@
 ; evaluates the body each time it's called.
 (define fexpress-ilambda
   (makeshift-fexpr
-    #;compile
-    (lambda (macro-env local-env op-var args)
+    #;macroexpand
+    (lambda (macro-env local-env cont op-var args)
       #f)
     #;apply
     (lambda (env cont args)
