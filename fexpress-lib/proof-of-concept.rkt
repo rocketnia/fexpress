@@ -141,7 +141,9 @@
        (lazy-value/t_
          (lambda ()
            (type_-eval
-             (fexpress-continue-eval/t_ cont val/t_
+             (fexpress-continue-eval/t_
+               (apply/ce env args (done/ce (any-value/t+)))
+               val/t_
                (type_-eval val/t_))))
          (lambda ()
            (match-define (compilation-result _ free-vars op-compiled)

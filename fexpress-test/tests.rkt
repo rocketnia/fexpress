@@ -53,3 +53,8 @@
            (clambda (x) (+ x x))))
        (clambda (x) (* x x))))
   100)
+
+(check-equal?
+  (fexpress-eval-in-base-env
+    '(((clambda (x y) (clambda (z) (+ x y z))) 1 2) 3))
+  6)
