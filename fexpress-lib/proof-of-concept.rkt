@@ -251,7 +251,7 @@
         ; `apply/ce` counts on the fact that when we have a procedure
         ; value, we're handling it ourselves above.
         ;
-        ; TODO LANGUAGE: Consider moving this branch to a
+        ; TODO CLEANUP: Consider moving this branch to a
         ; `continuation-expr-continue-eval-value/t_` method.
         ;
         (continuation-expr-continue-eval/t_ cont val/t_)])]
@@ -273,22 +273,29 @@
 
 (struct parsed-lambda-args (n arg-vars body) #:transparent)
 
-(define (parse-lambda-args args)
+(define (parse-lambda-args err-name args)
   (match args
     [`(,arg-vars ,body)
-     ; TODO LANGUAGE: Stop reporting these as `ilambda: ...` errors
-     ; when `clambda` uses this too.
      (unless (list? arg-vars)
-       (error "ilambda: expected the argument list to be a list"))
+       (raise-arguments-error err-name
+         "expected the argument list to be a list"
+         "argument list" arg-vars))
      (unless (andmap symbol? arg-vars)
-       (error "ilambda: expected the argument list to be a list of symbols"))
+       (raise-arguments-error err-name
+         "expected the argument list to be a list of symbols"
+         "argument list" arg-vars))
      (define n (length arg-vars))
      (unless (equal? n (hash-count
                          (for/hash ([arg (in-list arg-vars)])
                            (values arg #t))))
-       (error "ilambda: expected the argument list to be a list of mutually unique symbols"))
+       (raise-arguments-error err-name
+         "expected the argument list to be a list of mutually unique symbols"
+         "argument list" arg-vars))
      (parsed-lambda-args n arg-vars body)]
-    [_ (error "ilambda: expected an argument list and a body")]))
+    [_
+     (raise-arguments-error err-name
+       "expected an argument list and a body"
+       "subforms" args)]))
 
 ; An interpreted lambda. This doesn't attempt to compile the body. It
 ; evaluates the body each time it's called.
@@ -296,17 +303,23 @@
   (makeshift-fexpr
     #;continue-eval/t_
     (lambda (cont op/t_)
-      ; TODO LANGUAGE: Consider moving this branch to methods on the
+      ; TODO CLEANUP: Consider moving this branch to methods on the
       ; `gen:continuation-expr` generic interface.
       (match cont
         [(apply/ce env args cont)
          (match-define (parsed-lambda-args n arg-vars body)
-           (parse-lambda-args args))
+           (parse-lambda-args 'ilambda args))
          (type_-continue-eval/t_ cont
            (specific-value/t_
              (lambda arg-values
-               (unless (equal? n (length arg-values))
-                 (error "ilambda: wrong number of arguments at call time"))
+               (define received-n (length arg-values))
+               (unless (equal? n received-n)
+                 (raise-arguments-error 'ilambda
+                   "wrong number of arguments at call time"
+                   "number expected" n
+                   "number received" received-n
+                   "arguments expected" arg-vars
+                   "arguments received" arg-values))
                (define body-env
                  (for/fold ([env env])
                            ([arg-var (in-list arg-vars)]
@@ -321,7 +334,7 @@
 
 (define (compile-clambda env cont args)
   (match-define (parsed-lambda-args n arg-vars body)
-    (parse-lambda-args args))
+    (parse-lambda-args 'clambda args))
   (define body-env
     (for/fold ([env env])
               ([arg-var (in-list arg-vars)])
@@ -398,7 +411,7 @@
   (makeshift-fexpr
     #;continue-eval/t_
     (lambda (cont op/t_)
-      ; TODO LANGUAGE: Consider moving this branch to methods on the
+      ; TODO CLEANUP: Consider moving this branch to methods on the
       ; `gen:continuation-expr` generic interface.
       (match cont
         [(apply/ce env args cont)
