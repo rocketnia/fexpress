@@ -20,7 +20,7 @@
 ;   language governing permissions and limitations under the License.
 
 
-(require (only-in racket/contract/base -> any/c contract-out))
+(require (only-in racket/contract/base -> any/c contract-out listof))
 (require (only-in racket/list append*))
 (require (only-in racket/match match match-define match-lambda**))
 ; TODO: Figure out a better way to make this conditional than
@@ -33,7 +33,15 @@
 
 (provide
   (contract-out
-    [fexpress-eval-in-base-env (-> any/c any/c)]))
+    [fexpress-eval-in-base-env (-> any/c any/c)]
+
+    ; TODO: Document these other exports.
+    [type+? (-> any/c boolean?)]
+    [type_? (-> any/c boolean?)]
+    [any-value/t+ (-> type+?)]
+    [any-value/t_ (-> type_?)]
+    [non-fexpr-value/t_ (-> type_?)]
+    [->/t+ (-> (listof type_?) type+? type+?)]))
 
 ; TODO: Reorganize this code. It's pretty messy.
 
@@ -52,6 +60,18 @@
   (type+-continue-eval/t_ env type+ val/t_))
 
 (struct any-value/t+ () #:transparent
+  #:methods gen:type+
+  [(define (type+-continue-eval/t_ env type+ val/t_)
+     val/t_)])
+
+; TODO LANGUAGE: Consider letting it be an error for this type to be
+; ascribed to a non-function (e.g., a number or an fexpr). Currently,
+; it's just used opportunistically to optimize the body of a
+; `clambda`, and the only way it can raise an error is by having a
+; number of arguments that doesn't match the length of the `clambda`'s
+; argument list.
+;
+(struct ->/t+ (arg-type_-list return/t+) #:transparent
   #:methods gen:type+
   [(define (type+-continue-eval/t_ env type+ val/t_)
      val/t_)])
@@ -125,6 +145,49 @@
    (define (type_-continue-eval/t_ env cont val/t_)
      (continuation-expr-continue-eval/t_ env cont val/t_))])
 
+(struct any-value/t_ () #:transparent
+  #:methods gen:type_
+  [(define (type_-eval type_)
+     (error "tried to evaluate the value level of the ascribed type `(any-value/t_)`"))
+   (define (type_-compile type_)
+     (error "tried to compile the value level of the ascribed type `(any-value/t_)`"))
+   (define (at-variable/t_ var type_)
+     (unknown-value/t_ (local-compilation-result var)))
+   (define (type_-continue-eval/t_ env cont val/t_)
+     (continuation-expr-continue-eval/t_ env cont val/t_))])
+
+; TODO LANGUAGE: Consider letting it be an error for this type to be
+; ascribed to an fexpr. Currently, it's just used opportunistically to
+; optimize the body of a `clambda`.
+(struct non-fexpr-value/t_ () #:transparent
+  #:methods gen:type_
+  [(define (type_-eval type_)
+     (error "tried to evaluate the value level of the ascribed type `(non-fexpr-value/t_)`"))
+   (define (type_-compile type_)
+     (error "tried to compile the value level of the ascribed type `(non-fexpr-value/t_)`"))
+   (define (at-variable/t_ var type_)
+     (variable-bound-non-fexpr-value/t_ var))
+   (define (type_-continue-eval/t_ env cont val/t_)
+     (non-fexpr-continue-eval/t_ env cont val/t_))])
+
+; TODO LANGUAGE: Consider letting it be an error for this type to be
+; ascribed to an fexpr. Currently, it's just used opportunistically to
+; optimize the body of a `clambda`.
+(struct variable-bound-non-fexpr-value/t_ (var) #:transparent
+  #:methods gen:type_
+  [(define (type_-eval type_)
+     ; TODO: Figure out if we should report this error in terms of
+     ; `variable-bound-non-fexpr-value/t_` even though it's more of an
+     ; implementation detail.
+     (error "tried to evaluate the value level of the ascribed type `(non-fexpr-value/t_)`"))
+   (define (type_-compile type_)
+     (match-define (variable-bound-non-fexpr-value/t_ var) type_)
+     (local-compilation-result var))
+   (define (at-variable/t_ var type_)
+     (variable-bound-non-fexpr-value/t_ var))
+   (define (type_-continue-eval/t_ env cont val/t_)
+     (non-fexpr-continue-eval/t_ env cont val/t_))])
+
 (struct done/ce (type+) #:transparent
   #:methods gen:continuation-expr
   [(define (continuation-expr-continue-eval/t_ env cont val/t_)
@@ -189,7 +252,71 @@
     [_ (error "Unrecognized expression")]))
 
 (define (environment-get/t_ env var)
-  (hash-ref env var (lambda () (error "Unbound variable"))))
+  (hash-ref env var
+    (lambda ()
+      (raise-arguments-error 'environment-get/t_
+        "Unbound variable"
+        "var" var
+        "env" env))))
+
+(define
+  (non-fexpr-continue-eval-helper/t_
+    env cont val-to-eval/t_ val-to-compile/t_ args)
+  (define arg-type_-list
+    (for/list ([arg (in-list args)])
+      (fexpress-eval/t_ env (done/ce (any-value/t+)) arg)))
+  (type_-continue-eval/t_ env cont
+
+    ; TODO LAZY: Rather than just using `lazy-value/t_` here, we could
+    ; also specialize `type_-continue-eval/t_` to treat certain
+    ; procedures as being guaranteed not to return an fexpr. That
+    ; could let us use those procedure calls in functional position
+    ; without inhibiting compilation.
+    ;
+    (lazy-value/t_
+      (lambda ()
+        (apply (type_-eval val-to-eval/t_)
+          (for/list ([arg/t_ (in-list arg-type_-list)])
+            (type_-eval arg/t_))))
+      (lambda ()
+        (define op-compilation-result
+          (type_-compile val-to-compile/t_))
+        (define arg-compilation-results
+          (for/list ([arg/t_ (in-list arg-type_-list)])
+            (type_-compile arg/t_)))
+        (match-define
+          (compilation-result
+            op-depends-on-env? op-free-vars op-compiled)
+          op-compilation-result)
+        (let next ([depends-on-env? op-depends-on-env?]
+                   [free-vars op-free-vars]
+                   [rev-compiled-args (list)]
+                   [arg-compilation-results
+                    arg-compilation-results])
+          (match arg-compilation-results
+            [(list)
+             (compilation-result depends-on-env? free-vars
+               `(,#'#%app ,op-compiled
+                          ,@(reverse rev-compiled-args)))]
+            [(cons
+               (compilation-result arg-depends-on-env?
+                                   arg-free-vars
+                                   compiled-arg)
+               arg-compilation-results)
+             (next (or depends-on-env? arg-depends-on-env?)
+                   (hash-union free-vars arg-free-vars
+                               #:combine (match-lambda**
+                                           [(#t #t) #t]))
+                   (cons compiled-arg rev-compiled-args)
+                   arg-compilation-results)]))))))
+
+(define (non-fexpr-continue-eval/t_ env cont val/t_)
+  ; TODO CLEANUP: Consider moving this branch to a
+  ; `continuation-expr-continue-eval-value/t_` method.
+  (match cont
+    [(apply/ce args cont)
+     (non-fexpr-continue-eval-helper/t_ env cont val/t_ val/t_ args)]
+    [_ (continuation-expr-continue-eval/t_ env cont val/t_)]))
 
 (define (fexpress-continue-eval/t_ env cont val/t_ val)
   (cond
@@ -204,53 +331,8 @@
            (unless (and (list? args)
                         (procedure-arity-includes? val (length args)))
              (error "Wrong number of arguments to a procedure"))
-           (define arg-type_-list
-             (for/list ([arg (in-list args)])
-               (fexpress-eval/t_ env (done/ce (any-value/t+)) arg)))
-           (type_-continue-eval/t_ env cont
-
-             ; TODO LAZY: Rather than just using `lazy-value/t_` here,
-             ; we could also specialize `type_-continue-eval/t_` to
-             ; treat certain procedures as being guaranteed not to
-             ; return an fexpr. That could let us use those procedure
-             ; calls in  functional position without inhibiting
-             ; compilation.
-             ;
-             (lazy-value/t_
-               (lambda ()
-                 (apply val
-                   (for/list ([arg/t_ (in-list arg-type_-list)])
-                     (type_-eval arg/t_))))
-               (lambda ()
-                 (define op-compilation-result (type_-compile val/t_))
-                 (define arg-compilation-results
-                   (for/list ([arg/t_ (in-list arg-type_-list)])
-                     (type_-compile arg/t_)))
-                 (match-define
-                   (compilation-result
-                     op-depends-on-env? op-free-vars op-compiled)
-                   op-compilation-result)
-                 (let next ([depends-on-env? op-depends-on-env?]
-                            [free-vars op-free-vars]
-                            [rev-compiled-args (list)]
-                            [arg-compilation-results
-                             arg-compilation-results])
-                   (match arg-compilation-results
-                     [(list)
-                      (compilation-result depends-on-env? free-vars
-                        `(,#'#%app ,op-compiled
-                                   ,@(reverse rev-compiled-args)))]
-                     [(cons
-                        (compilation-result arg-depends-on-env?
-                                            arg-free-vars
-                                            compiled-arg)
-                        arg-compilation-results)
-                      (next (or depends-on-env? arg-depends-on-env?)
-                            (hash-union free-vars arg-free-vars
-                                        #:combine (match-lambda**
-                                                    [(#t #t) #t]))
-                            (cons compiled-arg rev-compiled-args)
-                            arg-compilation-results)])))))]
+           (non-fexpr-continue-eval-helper/t_
+             env cont (specific-value/t_ val) val/t_ args)]
           [#t (error "Uncallable value")])]
        [_ (continuation-expr-continue-eval/t_ env cont val/t_)])]))
 
@@ -332,19 +414,32 @@
 (define (compile-clambda env cont args)
   (match-define (parsed-lambda-args n arg-vars body)
     (parse-lambda-args 'clambda args))
+  (match-define (list arg-type_-list return-val/t+)
+    (match cont
+      ; TODO CLEANUP: Consider moving this branch to methods on the
+      ; `gen:continuation-expr` and `gen:type+` generic interfaces.
+      [(done/ce (->/t+ arg-type_-list return-val/t+))
+       (unless (equal? n (length arg-type_-list))
+         (error "Expected the type of a function to have just as many arguments as the argument list of the function"))
+       (list
+         (for/list ([arg-var (in-list arg-vars)]
+                    [arg/t_ (in-list arg-type_-list)])
+           (at-variable/t_ arg-var arg/t_))
+         return-val/t+)]
+      [_
+       (list
+         (for/list ([arg-var (in-list arg-vars)])
+           (unknown-value/t_ (local-compilation-result arg-var)))
+         (any-value/t+))]))
   (define body-env
     (for/fold ([env env])
-              ([arg-var (in-list arg-vars)])
-      (hash-set env arg-var
-        ; TODO TYPED ARGUMENTS: Make the negative types here depend on
-        ; `cont`.
-        (unknown-value/t_ (local-compilation-result arg-var)))))
+              ([arg-var (in-list arg-vars)]
+               [arg/t_ (in-list arg-type_-list)])
+      (hash-set env arg-var arg/t_)))
   (match-define
     (compilation-result depends-on-env? body-free-vars body-compiled)
     (type_-compile
-      ; TODO TYPED ARGUMENTS: Make the continuation here depend on
-      ; `cont`.
-      (fexpress-eval/t_ body-env (done/ce (any-value/t+)) body)))
+      (fexpress-eval/t_ body-env (done/ce return-val/t+) body)))
   (define body-with-env-compiled
     (if depends-on-env?
       `(,#'let
@@ -428,6 +523,30 @@
              (const0 compiled-clambda)))]
         [_ (continuation-expr-continue-eval/t_ env cont op/t_)]))))
 
+; Type ascription. The usage is `(the val/t+ val)`, where `val/t+` is
+; syntactically a positive type (not just an expression that evaluates
+; to one) and `val` is an expression the type applies to. This is
+; mainly used to allow function bodies to use Lisp-1-style function
+; application on local variables without inhibiting compilation.
+;
+(define fexpress-the
+  (makeshift-fexpr
+    #;continue-eval/t_
+    (lambda (env cont op/t_)
+      ; TODO CLEANUP: Consider moving this branch to methods on the
+      ; `gen:continuation-expr` generic interface.
+      (match cont
+        [(apply/ce args cont)
+         (match args
+           [`(,expr/t+ ,expr)
+            (unless (type+? expr/t+)
+              (error "the: expected the type to be a positive type value, syntactically, and not merely an expression that evaluated to one"))
+            (type_-continue-eval/t_ env cont
+              (fexpress-eval/t_ env (done/ce expr/t+) expr))]
+           [_
+            (error "the: expected a literal positive type and an expression")])]
+        [_ (continuation-expr-continue-eval/t_ env cont op/t_)]))))
+
 (define (fexpress-make-base-env)
   (define naive-env
     (hash 'type_-eval type_-eval
@@ -437,6 +556,7 @@
           'make-base-env fexpress-make-base-env
           'ilambda fexpress-ilambda
           'clambda fexpress-clambda
+          'the fexpress-the
           '+ +
           '* *
           'app (lambda (op . args) (apply op args))))

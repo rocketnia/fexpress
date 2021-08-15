@@ -21,8 +21,7 @@
 
 (require (only-in rackunit check-equal?))
 
-(require
-  (only-in fexpress/proof-of-concept fexpress-eval-in-base-env))
+(require fexpress/proof-of-concept)
 
 ; (We provide nothing from this module.)
 
@@ -57,4 +56,28 @@
 (check-equal?
   (fexpress-eval-in-base-env
     '(((clambda (x y) (clambda (z) (+ x y z))) 1 2) 3))
+  6)
+
+(check-equal?
+  (
+    (
+      (
+        (fexpress-eval-in-base-env
+
+          ; This should evaluate to a curried composition function.
+          ;
+          ; TODO: Make a convincing test that shows that this compiles
+          ; down efficiently and that a version without an annotation
+          ; as specific as this does not.
+          ;
+          `(the ,(->/t+ (list (non-fexpr-value/t_))
+                   (->/t+ (list (non-fexpr-value/t_))
+                     (any-value/t+)))
+             (clambda (f)
+               (clambda (g)
+                 (clambda (x)
+                   (f (g x)))))))
+        (lambda (x) (+ 2 x)))
+      (lambda (x) (+ 3 x)))
+    1)
   6)
