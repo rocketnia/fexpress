@@ -42,68 +42,82 @@
 
 
 (define-generics fexpr
-  (fexpr-macroexpand macro-env local-env cont op-var fexpr args)
+  (fexpr-macroexpand env cont op-var fexpr args)
   (fexpr-apply env cont fexpr args))
 
 (define-generics continuation-expr
   (continuation-expr-continue-compile continuation-expr val-compiled)
-  (continuation-expr-continue-eval continuation-expr val))
+  (continuation-expr-continue-eval continuation-expr val-symbolic))
 
 ; Positive types.
 (define-generics type+
   (type+-continue-compile type+ val-compiled)
-  (type+-continue-eval type+ val))
+  (type+-continue-eval type+ val-symbolic))
 
 (struct any-value/t+ () #:transparent
   #:methods gen:type+
   [(define (type+-continue-compile type+ val-compiled)
      val-compiled)
-   (define (type+-continue-eval type+ val)
-     val)])
+   (define (type+-continue-eval type+ val-symbolic)
+     val-symbolic)])
+
+; Negative types.
+(define-generics type_
+  (type_-eval type_))
+
+(struct specific-value/t_ (value) #:transparent
+  #:methods gen:type_
+  [(define (type_-eval type_)
+     (match-define (specific-value/t_ value) type_)
+     value)])
+
+(struct local-value/t_ () #:transparent
+  #:methods gen:type_
+  [(define (type_-eval type_)
+     (error "Tried to evaluate something that represented a local variable during compilation. This may be an internal bug in the Fexpress proof of concept."))])
+
+(struct symbolic (type_ compilation-result) #:transparent)
+
+(define (symbolic-get-value val-symbolic)
+  (match-define (symbolic type_ _) val-symbolic)
+  (type_-eval type_))
 
 (struct done/ce (type+) #:transparent
   #:methods gen:continuation-expr
   [(define (continuation-expr-continue-compile cont val-compiled)
      (match-define (done/ce type+) cont)
      (type+-continue-compile type+ val-compiled))
-   (define (continuation-expr-continue-eval cont val)
+   (define (continuation-expr-continue-eval cont val-symbolic)
      (match-define (done/ce type+) cont)
-     (type+-continue-eval type+ val))])
+     (type+-continue-eval type+ val-symbolic))])
 
-(struct apply/ce (macro-env local-env args next) #:transparent
+(struct apply/ce (env args next) #:transparent
   #:methods gen:continuation-expr
   [(define (continuation-expr-continue-compile cont val-compiled)
-     (match-define
-       (apply/ce apply-macro-env apply-local-env args next)
-       cont)
+     (match-define (apply/ce env args next) cont)
      (match-define (compilation-result _ free-vars op-compiled)
        val-compiled)
      (continuation-expr-continue-compile next
        (compilation-result #t free-vars
          ; TODO LANGUAGE: We probably want to pass a better
          ; continuation here.
-         `(,#'fexpress-apply env
-                             (,#'done/ce (,#'any-value/t+))
-                             ,op-compiled
-                             (,#'quote ,args)))))
-   (define (continuation-expr-continue-eval cont val)
-     (match-define
-       (apply/ce apply-macro-env apply-local-env args next)
-       cont)
-     ; TODO LANGUAGE: The `apply-local-env` isn't used here. It should
-     ; be empty if we're doing eval/apply. It should only be populated
-     ; if we're doing compile/macroexpand. Handle this in a more
-     ; principled way (e.g., by making them both the same env and
-     ; causing an error if a variable with only a symbolic value is
-     ; being evaluated).
-     (fexpress-apply apply-macro-env next val args))])
+         ; TODO LANGUAGE: Hmm, the `env` we pass here should probably
+         ; depend on the `env` field of the `apply/ce`.
+         `(,#'symbolic-get-value
+            (,#'fexpress-apply env
+                               (,#'done/ce (,#'any-value/t+))
+                               ,op-compiled
+                               (,#'quote ,args))))))
+   (define (continuation-expr-continue-eval cont val-symbolic)
+     (match-define (apply/ce env args next) cont)
+     (fexpress-apply env next (symbolic-get-value val-symbolic)
+                     args))])
 
 (struct makeshift-fexpr (macroexpand apply) #:transparent
   #:methods gen:fexpr
-  [(define
-     (fexpr-macroexpand macro-env local-env cont op-var op-val args)
+  [(define (fexpr-macroexpand env cont op-var op-val args)
      (match-define (makeshift-fexpr macroexpand apply) op-val)
-     (macroexpand macro-env local-env cont op-var args))
+     (macroexpand env cont op-var args))
    (define (fexpr-apply env cont op args)
      (match-define (makeshift-fexpr macroexpand apply) op)
      (apply env cont args))])
@@ -111,13 +125,26 @@
 (define (literal? v)
   (exact-integer? v))
 
+; TODO LANGUAGE: See if we should keep using `#f` in place of a
+; missing compilation result like this. We only do this in results of
+; evaluation, where it's the expression that's the important part
+; anyway. We'll probably need to change it once we have fexprs whose
+; macroexpansion behavior relies on being able to insert references to
+; themselves into the code at run time. By then, perhaps
+; `fexpress-eval` and `fexpress-compile` will have been completely
+; merged somehow, making this moot.
+(define (not-actually-symbolic value)
+  (symbolic (specific-value/t_ value) #f))
+
 (define (fexpress-eval env cont expr)
   (match expr
     [`(,op-expr . ,args)
-     (fexpress-eval env (apply/ce env (hash) args cont) op-expr)]
+     (fexpress-eval env (apply/ce env args cont) op-expr)]
     [(? symbol? var)
      (continuation-expr-continue-eval cont (environment-get env var))]
-    [(? literal? val) (continuation-expr-continue-eval cont val)]
+    [(? literal? val)
+     (continuation-expr-continue-eval cont
+       (not-actually-symbolic val))]
     [_ (error "Unrecognized expression")]))
 
 (define (environment-get env var)
@@ -131,27 +158,47 @@
                   (procedure-arity-includes? op (length args)))
        (error "Wrong number of arguments to a procedure"))
      (continuation-expr-continue-eval cont
-       (apply op
-         (for/list ([arg (in-list args)])
-           (fexpress-eval env (done/ce (any-value/t+)) arg))))]
+       (not-actually-symbolic
+         (apply op
+           (for/list ([arg (in-list args)])
+             (symbolic-get-value
+               (fexpress-eval env (done/ce (any-value/t+)) arg))))))]
     [#t (error "Uncallable value")]))
 
-(struct compilation-result (depends-on-env? free-vars expr))
+(struct compilation-result (depends-on-env? free-vars expr)
+  #:transparent)
 
 (define (format-local-symbol sym)
   (format-symbol "-~a" sym))
 
+(define (local-compilation-result-already-formatted var formatted-var)
+  (compilation-result #f (hash var #t) formatted-var))
+
+(define (local-compilation-result var)
+  (local-compilation-result-already-formatted
+    var
+    (format-local-symbol var)))
+
+(define (gen-local-compilation-result var formatted-var)
+  `(.#'local-compilation-result-already-formatted
+     (,#'quote ,var)
+     (,#'quote ,formatted-var)))
+
 (define (fexpress-fail-to-compile cont expr)
   (continuation-expr-continue-compile cont
     (compilation-result #t (hash)
-      `(,#'fexpress-eval
-         env (,#'done/ce (,#'any-value/t+)) (,#'quote ,expr)))))
+      `(,#'symbolic-get-value
+         (,#'fexpress-eval
+           env (,#'done/ce (,#'any-value/t+)) (,#'quote ,expr))))))
 
-(define
-  (fexpress-macroexpand macro-env local-env cont op-var op-val args)
+; TODO LANGUAGE: We only call this in one place. See if we should
+; inline it.
+(define (fexpress-macroexpand env cont op-var op-symbolic args)
+  ; TODO LANGUAGE: We shouldn't really be getting the value here. We
+  ; should invoke the negative type's own macroexpansion behavior.
+  (define op-val (symbolic-get-value op-symbolic))
   (cond
-    [(fexpr? op-val)
-     (fexpr-macroexpand macro-env local-env cont op-var op-val args)]
+    [(fexpr? op-val) (fexpr-macroexpand env cont op-var op-val args)]
     [(procedure? op-val)
      (unless (and (list? args)
                   (procedure-arity-includes? op-val (length args)))
@@ -172,8 +219,7 @@
           (match-define
             (compilation-result
               arg-depends-on-env? arg-free-vars compiled-arg)
-            (fexpress-compile
-              macro-env local-env (done/ce (any-value/t+)) arg))
+            (fexpress-compile env (done/ce (any-value/t+)) arg))
           (next (or depends-on-env? arg-depends-on-env?)
                 (hash-union free-vars arg-free-vars
                             #:combine (match-lambda**
@@ -182,33 +228,21 @@
                 args)]))]
     [#t (error "Uncallable value")]))
 
-(define (fexpress-compile macro-env local-env cont expr)
+(define (fexpress-compile env cont expr)
   (match expr
     [`(,op-expr . ,args)
      (cond
        [(not (symbol? op-expr))
-        (fexpress-compile
-          macro-env
-          local-env
-          (apply/ce macro-env local-env args cont)
-          expr)]
-       [(hash-has-key? local-env op-expr)
-        (fexpress-fail-to-compile cont expr)]
+        (fexpress-compile env (apply/ce env args cont) op-expr)]
        [#t
-        (define op-val (environment-get macro-env op-expr))
+        (define op-symbolic (environment-get env op-expr))
         (or
-          (fexpress-macroexpand
-            macro-env local-env cont op-expr op-val args)
+          (fexpress-macroexpand env cont op-expr op-symbolic args)
           (fexpress-fail-to-compile cont expr))])]
     [(? symbol? var)
-     (unless (hash-has-key? local-env var)
-       ; NOTE: We call this just for the errors.
-       (environment-get macro-env var))
-     ; TODO LANGUAGE: Hmm, shouldn't this be able to use more
-     ; information about the variable binding?
-     (continuation-expr-continue-compile cont
-       (compilation-result #f (hash var #t)
-         (format-local-symbol var)))]
+     (match-define (symbolic _ var-compiled)
+       (environment-get env var))
+     (continuation-expr-continue-compile cont var-compiled)]
     [(? literal? val)
      (continuation-expr-continue-compile cont
        (compilation-result #f (hash) `(,#'#%datum . ,val)))]
@@ -236,44 +270,58 @@
 (define fexpress-ilambda
   (makeshift-fexpr
     #;macroexpand
-    (lambda (macro-env local-env cont op-var args)
+    (lambda (env cont op-var args)
       #f)
     #;apply
     (lambda (env cont args)
       (match-define (parsed-lambda-args n arg-vars body)
         (parse-lambda-args args))
       (continuation-expr-continue-eval cont
-        (lambda arg-values
-          (unless (equal? n (length arg-values))
-            (error "ilambda: wrong number of arguments at call time"))
-          (define local-env
-            (for/fold ([env env])
-                      ([arg-var (in-list arg-vars)]
-                       [arg-value (in-list arg-values)])
-              (hash-set env arg-var arg-value)))
-          (fexpress-eval local-env (done/ce (any-value/t+)) body))))))
+        (not-actually-symbolic
+          (lambda arg-values
+            (unless (equal? n (length arg-values))
+              (error "ilambda: wrong number of arguments at call time"))
+            (define body-env
+              (for/fold ([env env])
+                        ([arg-var (in-list arg-vars)]
+                        [arg-value (in-list arg-values)])
+                (hash-set env arg-var
+                  (symbolic (specific-value/t_ arg-value)
+                            (local-compilation-result arg-var)))))
+            (symbolic-get-value
+              (fexpress-eval body-env (done/ce (any-value/t+))
+                             body))))))))
 
-(define (compile-clambda macro-env local-env cont args)
+(define (compile-clambda env cont args)
   (match-define (parsed-lambda-args n arg-vars body)
     (parse-lambda-args args))
-  (define body-local-env
-    (for/fold ([body-local-env local-env])
+  (define body-env
+    (for/fold ([env env])
               ([arg-var (in-list arg-vars)])
-      (hash-set body-local-env arg-var #t)))
+      (hash-set env arg-var
+        ; TODO LANGUAGE: Make the negative types here depend on
+        ; `cont`.
+        (symbolic (local-value/t_)
+                  (local-compilation-result arg-var)))))
   (match-define
     (compilation-result depends-on-env? body-free-vars body-compiled)
     ; TODO LANGUAGE: Make the continuation here depend on `cont`.
-    (fexpress-compile
-      macro-env body-local-env (done/ce (any-value/t+)) body))
+    (fexpress-compile body-env (done/ce (any-value/t+)) body))
   (define body-with-env-compiled
     (if depends-on-env?
-      `(,#'let ([env
-                 (,#'hash-set* env
-                   ,@(append*
-                       (for/list ([arg-var (in-list arg-vars)])
-                         (define local-arg-var
-                           (format-local-symbol arg-var))
-                         `(',arg-var ,local-arg-var))))])
+      `(,#'let
+         ([env
+           (,#'hash-set* env
+             ,@(append*
+                 (for/list ([arg-var (in-list arg-vars)])
+                   (define local-arg-var
+                     (format-local-symbol arg-var))
+                   `(',arg-var
+                      (,#'symbolic
+                        (,#'specific-value/t_ ,local-arg-var)
+                        ,(gen-local-compilation-result
+                           arg-var
+                           local-arg-var))))))])
          ,body-compiled)
       body-compiled))
   (define free-vars
@@ -292,21 +340,20 @@
 (define fexpress-clambda
   (makeshift-fexpr
     #;macroexpand
-    (lambda (macro-env local-env cont op-var args)
+    (lambda (env cont op-var args)
       (continuation-expr-continue-compile cont
-        (compile-clambda macro-env local-env cont args)))
+        (compile-clambda env cont args)))
     #;apply
     (lambda (env cont args)
       (match-define
         (compilation-result depends-on-env? free-vars lambda-compiled)
-        (compile-clambda env (hash) cont args))
+        (compile-clambda env cont args))
       (define free-vars-list (hash-keys free-vars))
+      (define local-free-vars-list
+        (for/list ([free-var (in-list free-vars-list)])
+          (format-local-symbol free-var)))
       (define lambda-maker-compiled
-        `(,#'lambda
-           (
-             env
-             ,@(for/list ([free-var (in-list free-vars-list)])
-                 (format-local-symbol free-var)))
+        `(,#'lambda (env ,@local-free-vars-list)
            ,lambda-compiled))
       ; TODO: Figure out a better way to make these conditional than
       ; commenting them out.
@@ -316,21 +363,41 @@
         (eval lambda-maker-compiled
               (namespace-anchor->namespace here)))
       (continuation-expr-continue-eval cont
-        (apply lambda-maker env
-          (for/list ([free-var (in-list free-vars-list)])
-            (environment-get env free-var)))))))
+        (not-actually-symbolic
+          (apply lambda-maker
+            (for/fold ([lambda-maker-env env])
+                      ([free-var (in-list free-vars-list)]
+                      [local-free-var (in-list local-free-vars-list)])
+              (match-define (symbolic existing-type_ existing-compiled)
+                (hash-ref env free-var
+                  (lambda ()
+                    (error "Internal error in the Fexpress proof of concept"))))
+              (hash-set lambda-maker-env free-var
+                (symbolic existing-type_
+                          (local-compilation-result-already-formatted
+                            free-var local-free-var))))
+            (for/list ([free-var (in-list free-vars-list)])
+              (symbolic-get-value
+                (environment-get env free-var)))))))))
 
 (define (fexpress-make-base-env)
-  (hash 'eval fexpress-eval
-        'done/ce done/ce
-        'any-value/t+ any-value/t+
-        'make-base-env fexpress-make-base-env
-        'ilambda fexpress-ilambda
-        'clambda fexpress-clambda
-        '+ +
-        '* *
-        'app (lambda (op . args) (apply op args))))
+  (define naive-env
+    (hash 'symbolic-get-value symbolic-get-value
+          'eval fexpress-eval
+          'done/ce done/ce
+          'any-value/t+ any-value/t+
+          'make-base-env fexpress-make-base-env
+          'ilambda fexpress-ilambda
+          'clambda fexpress-clambda
+          '+ +
+          '* *
+          'app (lambda (op . args) (apply op args))))
+  (for/hash ([(var val) (in-hash naive-env)])
+    (values var
+            (symbolic (specific-value/t_ val)
+                      (local-compilation-result var)))))
 
 (define (fexpress-eval-in-base-env expr)
-  (fexpress-eval (fexpress-make-base-env) (done/ce (any-value/t+))
-                 expr))
+  (symbolic-get-value
+    (fexpress-eval (fexpress-make-base-env) (done/ce (any-value/t+))
+                   expr)))
