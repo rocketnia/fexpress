@@ -96,7 +96,9 @@
 (struct unknown-value/t_ (val-compiled) #:transparent
   #:methods gen:type_
   [(define (type_-eval type_)
-     (error "Tried to evaluate the value level of a negative type that represented a run-time value during compilation. This may be an internal bug in the Fexpress proof of concept."))
+     (raise-arguments-error 'type_-eval
+       "Tried to evaluate the value level of a negative type that represented a run-time value during compilation. This may be an internal bug in the Fexpress proof of concept."
+       "negative type" type_))
    (define (type_-compile type_)
      (match-define (unknown-value/t_ val-compiled) type_)
      val-compiled)
@@ -135,33 +137,40 @@
   #:methods gen:continuation-expr
   [(define (continuation-expr-continue-eval/t_ cont val/t_)
      (match-define (apply/ce env args next) cont)
-     ; NOTE: We'll only get here if we're compiling. If `val/t_` had a
-     ; value, we would be in `fexpress-continue-eval/t_`.
-     (match-define (compilation-result _ free-vars op-compiled)
-       (type_-compile val/t_))
      (type_-continue-eval/t_ next
-       (unknown-value/t_ next
-         (compilation-result #t free-vars
+       (lazy-value/t_
+         (lambda ()
+           (type_-eval
+             (fexpress-continue-eval/t_ cont val/t_
+               (type_-eval val/t_))))
+         (lambda ()
+           (match-define (compilation-result _ free-vars op-compiled)
+             (type_-compile val/t_))
+           (type_-continue-eval/t_ next
+             (unknown-value/t_
+               (compilation-result #t free-vars
 
-           ; TODO LANGUAGE: We probably want to pass a better
-           ; continuation here.
-           ;
-           ; TODO LANGUAGE: Hmm, the `env` we pass here should
-           ; probably depend on the `env` field of the `apply/ce`.
-           ;
-           ; TODO LANGUAGE: Can we replace this `specific-value/t_`
-           ; call with something that makes a negative type with more
-           ; of a grasp of what it's doing? We have the type `val/t_`,
-           ; but do we have a way of reifying it? Can we be sure the
-           ; compilation results it carries have all their variables
-           ; in scope when they're used for this reified type's
-           ; compilation results?
-           ;
-           `(,#'type_-eval
-              (,#'fexpress-continue-eval/t_
-                (,#'apply/ce env (,#'quote ,args)
-                  (,#'done/ce (,#'any-value/t+)))
-                (,#'specific-value/t_ ,op-compiled)))))))])
+                 ; TODO LANGUAGE: We probably want to pass a better
+                 ; continuation here.
+                 ;
+                 ; TODO LANGUAGE: Hmm, the `env` we pass here should
+                 ; probably depend on the `env` field of the
+                 ; `apply/ce`.
+                 ;
+                 ; TODO LANGUAGE: Can we replace this
+                 ; `specific-value/t_` call with something that makes
+                 ; a negative type with more of a grasp of what it's
+                 ; doing? We have the type `val/t_`, but do we have a
+                 ; way of reifying it? Can we be sure the compilation
+                 ; results it carries have all their variables in
+                 ; scope when they're used for this reified type's
+                 ; compilation results?
+                 ;
+                 `(,#'type_-eval
+                     (,#'fexpress-continue-eval/t_
+                       (,#'apply/ce env (,#'quote ,args)
+                         (,#'done/ce (,#'any-value/t+)))
+                       (,#'specific-value/t_ ,op-compiled))))))))))])
 
 (struct makeshift-fexpr (continue-eval/t_) #:transparent
   #:methods gen:fexpr
@@ -246,7 +255,7 @@
         ; `continuation-expr-continue-eval-value/t_` method.
         ;
         (continuation-expr-continue-eval/t_ cont val/t_)])]
-    [#t (error "Uncallable value")]))
+    [#t (continuation-expr-continue-eval/t_ cont val/t_)]))
 
 (struct compilation-result (depends-on-env? free-vars expr)
   #:transparent)
