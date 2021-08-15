@@ -42,127 +42,210 @@
 
 
 (define-generics fexpr
-  (fexpr-macroexpand env cont op-var fexpr args)
-  (fexpr-apply env cont fexpr args))
+  (fexpr-continue-eval/t_ cont fexpr/t_ fexpr))
 
 (define-generics continuation-expr
-  (continuation-expr-continue-compile continuation-expr val-compiled)
-  (continuation-expr-continue-eval continuation-expr val-symbolic))
+  (continuation-expr-continue-eval/t_ continuation-expr val/t_))
 
 ; Positive types.
 (define-generics type+
-  (type+-continue-compile type+ val-compiled)
-  (type+-continue-eval type+ val-symbolic))
+  (type+-continue-eval/t_ type+ val/t_))
 
 (struct any-value/t+ () #:transparent
   #:methods gen:type+
-  [(define (type+-continue-compile type+ val-compiled)
-     val-compiled)
-   (define (type+-continue-eval type+ val-symbolic)
-     val-symbolic)])
+  [(define (type+-continue-eval/t_ type+ val/t_)
+     val/t_)])
 
 ; Negative types.
 (define-generics type_
-  (type_-eval type_))
+  (type_-eval type_)
+  (type_-compile type_)
+  (at-variable/t_ var type_)
+  (type_-continue-eval/t_ cont type_))
+
+(struct specific-variable-bound-value/t_ (var val) #:transparent
+  #:methods gen:type_
+  [(define (type_-eval type_)
+     (match-define (specific-variable-bound-value/t_ var val) type_)
+     val)
+   (define (type_-compile type_)
+     (match-define (specific-variable-bound-value/t_ var val) type_)
+     (local-compilation-result var))
+   (define (at-variable/t_ var type_)
+     (match-define (specific-variable-bound-value/t_ original-var val)
+       type_)
+     (specific-variable-bound-value/t_ var val))
+   (define (type_-continue-eval/t_ cont val/t_)
+     (match-define (specific-variable-bound-value/t_ var val) val/t_)
+     (fexpress-continue-eval/t_ cont val/t_ val))])
 
 (struct specific-value/t_ (value) #:transparent
   #:methods gen:type_
   [(define (type_-eval type_)
      (match-define (specific-value/t_ value) type_)
-     value)])
+     value)
+   (define (type_-compile type_)
+     (error "Tried to compile the a value level of a negative type that represented a reified first-class value that didn't have a known compiled form. This may be an internal bug in the Fexpress proof of concept."))
+   (define (at-variable/t_ var type_)
+     (match-define (specific-value/t_ value) type_)
+     (specific-variable-bound-value/t_ var value))
+   (define (type_-continue-eval/t_ cont val/t_)
+     (match-define (specific-value/t_ value) val/t_)
+     (fexpress-continue-eval/t_ cont val/t_ value))])
 
-(struct local-value/t_ () #:transparent
+(struct unknown-value/t_ (val-compiled) #:transparent
   #:methods gen:type_
   [(define (type_-eval type_)
-     (error "Tried to evaluate something that represented a local variable during compilation. This may be an internal bug in the Fexpress proof of concept."))])
+     (error "Tried to evaluate the value level of a negative type that represented a run-time value during compilation. This may be an internal bug in the Fexpress proof of concept."))
+   (define (type_-compile type_)
+     (match-define (unknown-value/t_ val-compiled) type_)
+     val-compiled)
+   (define (at-variable/t_ var type_)
+     (unknown-value/t_ (local-compilation-result var)))
+   (define (type_-continue-eval/t_ cont val/t_)
+     (continuation-expr-continue-eval/t_ cont val/t_))])
 
-(struct symbolic (type_ compilation-result) #:transparent)
+(define (const0 result)
+  (lambda ()
+    result))
 
-(define (symbolic-get-value val-symbolic)
-  (match-define (symbolic type_ _) val-symbolic)
-  (type_-eval type_))
+(struct lazy-value/t_ (eval compile) #:transparent
+  #:methods gen:type_
+  [(define (type_-eval type_)
+     (match-define (lazy-value/t_ eval compile) type_)
+     (eval))
+   (define (type_-compile type_)
+     (match-define (lazy-value/t_ eval compile) type_)
+     (compile))
+   (define (at-variable/t_ var type_)
+     (match-define (lazy-value/t_ eval compile) type_)
+     (lazy-value/t_ eval (const0 (local-compilation-result var))))
+   (define (type_-continue-eval/t_ cont val/t_)
+     ; TODO LANGUAGE: See if the places that use `lazy-value/t_` will
+     ; want to customize the `type_-continue-eval/t_` method too.
+     (continuation-expr-continue-eval/t_ cont val/t_))])
 
 (struct done/ce (type+) #:transparent
   #:methods gen:continuation-expr
-  [(define (continuation-expr-continue-compile cont val-compiled)
+  [(define (continuation-expr-continue-eval/t_ cont val/t_)
      (match-define (done/ce type+) cont)
-     (type+-continue-compile type+ val-compiled))
-   (define (continuation-expr-continue-eval cont val-symbolic)
-     (match-define (done/ce type+) cont)
-     (type+-continue-eval type+ val-symbolic))])
+     (type+-continue-eval/t_ type+ val/t_))])
 
 (struct apply/ce (env args next) #:transparent
   #:methods gen:continuation-expr
-  [(define (continuation-expr-continue-compile cont val-compiled)
+  [(define (continuation-expr-continue-eval/t_ cont val/t_)
      (match-define (apply/ce env args next) cont)
+     ; NOTE: We'll only get here if we're compiling. If `val/t_` had a
+     ; value, we would be in `fexpress-continue-eval/t_`.
      (match-define (compilation-result _ free-vars op-compiled)
-       val-compiled)
-     (continuation-expr-continue-compile next
-       (compilation-result #t free-vars
-         ; TODO LANGUAGE: We probably want to pass a better
-         ; continuation here.
-         ; TODO LANGUAGE: Hmm, the `env` we pass here should probably
-         ; depend on the `env` field of the `apply/ce`.
-         `(,#'symbolic-get-value
-            (,#'fexpress-apply env
-                               (,#'done/ce (,#'any-value/t+))
-                               ,op-compiled
-                               (,#'quote ,args))))))
-   (define (continuation-expr-continue-eval cont val-symbolic)
-     (match-define (apply/ce env args next) cont)
-     (fexpress-apply env next (symbolic-get-value val-symbolic)
-                     args))])
+       (type_-compile val/t_))
+     (type_-continue-eval/t_ next
+       (unknown-value/t_ next
+         (compilation-result #t free-vars
 
-(struct makeshift-fexpr (macroexpand apply) #:transparent
+           ; TODO LANGUAGE: We probably want to pass a better
+           ; continuation here.
+           ;
+           ; TODO LANGUAGE: Hmm, the `env` we pass here should
+           ; probably depend on the `env` field of the `apply/ce`.
+           ;
+           ; TODO LANGUAGE: Can we replace this `specific-value/t_`
+           ; call with something that makes a negative type with more
+           ; of a grasp of what it's doing? We have the type `val/t_`,
+           ; but do we have a way of reifying it? Can we be sure the
+           ; compilation results it carries have all their variables
+           ; in scope when they're used for this reified type's
+           ; compilation results?
+           ;
+           `(,#'type_-eval
+              (,#'fexpress-continue-eval/t_
+                (,#'apply/ce env (,#'quote ,args)
+                  (,#'done/ce (,#'any-value/t+)))
+                (,#'specific-value/t_ ,op-compiled)))))))])
+
+(struct makeshift-fexpr (continue-eval/t_) #:transparent
   #:methods gen:fexpr
-  [(define (fexpr-macroexpand env cont op-var op-val args)
-     (match-define (makeshift-fexpr macroexpand apply) op-val)
-     (macroexpand env cont op-var args))
-   (define (fexpr-apply env cont op args)
-     (match-define (makeshift-fexpr macroexpand apply) op)
-     (apply env cont args))])
+  [(define (fexpr-continue-eval/t_ cont op/t_ op)
+     (match-define (makeshift-fexpr continue-eval/t_) op)
+     (continue-eval/t_ cont op/t_))])
 
 (define (literal? v)
   (exact-integer? v))
 
-; TODO LANGUAGE: See if we should keep using `#f` in place of a
-; missing compilation result like this. We only do this in results of
-; evaluation, where it's the expression that's the important part
-; anyway. We'll probably need to change it once we have fexprs whose
-; macroexpansion behavior relies on being able to insert references to
-; themselves into the code at run time. By then, perhaps
-; `fexpress-eval` and `fexpress-compile` will have been completely
-; merged somehow, making this moot.
-(define (not-actually-symbolic value)
-  (symbolic (specific-value/t_ value) #f))
-
-(define (fexpress-eval env cont expr)
+(define (fexpress-eval/t_ env cont expr)
   (match expr
     [`(,op-expr . ,args)
-     (fexpress-eval env (apply/ce env args cont) op-expr)]
+     (fexpress-eval/t_ env (apply/ce env args cont) op-expr)]
     [(? symbol? var)
-     (continuation-expr-continue-eval cont (environment-get env var))]
+     (type_-continue-eval/t_ cont (environment-get/t_ env var))]
     [(? literal? val)
-     (continuation-expr-continue-eval cont
-       (not-actually-symbolic val))]
+     (type_-continue-eval/t_ cont
+       (lazy-value/t_
+         (const0 val)
+         (const0
+           (compilation-result #f (hash) `(,#'#%datum . ,val)))))]
     [_ (error "Unrecognized expression")]))
 
-(define (environment-get env var)
+(define (environment-get/t_ env var)
   (hash-ref env var (lambda () (error "Unbound variable"))))
 
-(define (fexpress-apply env cont op args)
+(define (fexpress-continue-eval/t_ cont val/t_ val)
   (cond
-    [(fexpr? op) (fexpr-apply env cont op args)]
-    [(procedure? op)
-     (unless (and (list? args)
-                  (procedure-arity-includes? op (length args)))
-       (error "Wrong number of arguments to a procedure"))
-     (continuation-expr-continue-eval cont
-       (not-actually-symbolic
-         (apply op
-           (for/list ([arg (in-list args)])
-             (symbolic-get-value
-               (fexpress-eval env (done/ce (any-value/t+)) arg))))))]
+    [(fexpr? val) (fexpr-continue-eval/t_ cont val/t_ val)]
+    [(procedure? val)
+     (match cont
+       [(apply/ce env args cont)
+        (unless (and (list? args)
+                     (procedure-arity-includes? val (length args)))
+          (error "Wrong number of arguments to a procedure"))
+        (define arg-type_-list
+          (for/list ([arg (in-list args)])
+            (fexpress-eval/t_ env (done/ce (any-value/t+)) arg)))
+        (type_-continue-eval/t_ cont
+          (lazy-value/t_
+            (lambda ()
+              (apply val
+                (for/list ([arg/t_ (in-list arg-type_-list)])
+                  (type_-eval arg/t_))))
+            (lambda ()
+              (define op-compilation-result (type_-compile val/t_))
+              (define arg-compilation-results
+                (for/list ([arg/t_ (in-list arg-type_-list)])
+                  (type_-compile arg/t_)))
+              (match-define
+                (compilation-result
+                  op-depends-on-env? op-free-vars op-compiled)
+                op-compilation-result)
+              (let next ([depends-on-env? op-depends-on-env?]
+                         [free-vars op-free-vars]
+                         [rev-compiled-args (list)]
+                         [arg-compilation-results
+                          arg-compilation-results])
+                (match arg-compilation-results
+                  [(list)
+                   (compilation-result depends-on-env? free-vars
+                     `(,#'#%app ,op-compiled
+                                ,@(reverse rev-compiled-args)))]
+                  [(cons
+                     (compilation-result
+                       arg-depends-on-env? arg-free-vars compiled-arg)
+                     arg-compilation-results)
+                   (next (or depends-on-env? arg-depends-on-env?)
+                         (hash-union free-vars arg-free-vars
+                                     #:combine (match-lambda**
+                                                 [(#t #t) #t]))
+                         (cons compiled-arg rev-compiled-args)
+                         arg-compilation-results)])))))]
+       [_
+
+        ; NOTE: Our `continuation-expr-continue-eval/t_` method for
+        ; `apply/ce` counts on the fact that when we have a procedure
+        ; value, we're handling it ourselves above.
+        ;
+        ; TODO LANGUAGE: Consider moving this branch to a
+        ; `continuation-expr-continue-eval-value/t_` method.
+        ;
+        (continuation-expr-continue-eval/t_ cont val/t_)])]
     [#t (error "Uncallable value")]))
 
 (struct compilation-result (depends-on-env? free-vars expr)
@@ -179,80 +262,13 @@
     var
     (format-local-symbol var)))
 
-(define (gen-local-compilation-result var formatted-var)
-  `(.#'local-compilation-result-already-formatted
-     (,#'quote ,var)
-     (,#'quote ,formatted-var)))
-
-(define (fexpress-fail-to-compile cont expr)
-  (continuation-expr-continue-compile cont
-    (compilation-result #t (hash)
-      `(,#'symbolic-get-value
-         (,#'fexpress-eval
-           env (,#'done/ce (,#'any-value/t+)) (,#'quote ,expr))))))
-
-; TODO LANGUAGE: We only call this in one place. See if we should
-; inline it.
-(define (fexpress-macroexpand env cont op-var op-symbolic args)
-  ; TODO LANGUAGE: We shouldn't really be getting the value here. We
-  ; should invoke the negative type's own macroexpansion behavior.
-  (define op-val (symbolic-get-value op-symbolic))
-  (cond
-    [(fexpr? op-val) (fexpr-macroexpand env cont op-var op-val args)]
-    [(procedure? op-val)
-     (unless (and (list? args)
-                  (procedure-arity-includes? op-val (length args)))
-       (error "Wrong number of arguments to a procedure"))
-     (let next ([depends-on-env? #f]
-                [free-vars (hash)]
-                [rev-compiled-args (list)]
-                [args args])
-       (match args
-         [(list)
-          (continuation-expr-continue-compile cont
-            (compilation-result depends-on-env?
-                                (hash-set free-vars op-var #t)
-                                `(,#'#%app
-                                   ,(format-local-symbol op-var)
-                                   ,@(reverse rev-compiled-args))))]
-         [(cons arg args)
-          (match-define
-            (compilation-result
-              arg-depends-on-env? arg-free-vars compiled-arg)
-            (fexpress-compile env (done/ce (any-value/t+)) arg))
-          (next (or depends-on-env? arg-depends-on-env?)
-                (hash-union free-vars arg-free-vars
-                            #:combine (match-lambda**
-                                        [(#t #t) #t]))
-                (cons compiled-arg rev-compiled-args)
-                args)]))]
-    [#t (error "Uncallable value")]))
-
-(define (fexpress-compile env cont expr)
-  (match expr
-    [`(,op-expr . ,args)
-     (cond
-       [(not (symbol? op-expr))
-        (fexpress-compile env (apply/ce env args cont) op-expr)]
-       [#t
-        (define op-symbolic (environment-get env op-expr))
-        (or
-          (fexpress-macroexpand env cont op-expr op-symbolic args)
-          (fexpress-fail-to-compile cont expr))])]
-    [(? symbol? var)
-     (match-define (symbolic _ var-compiled)
-       (environment-get env var))
-     (continuation-expr-continue-compile cont var-compiled)]
-    [(? literal? val)
-     (continuation-expr-continue-compile cont
-       (compilation-result #f (hash) `(,#'#%datum . ,val)))]
-    [_ (error "Unrecognized expression")]))
-
 (struct parsed-lambda-args (n arg-vars body) #:transparent)
 
 (define (parse-lambda-args args)
   (match args
     [`(,arg-vars ,body)
+     ; TODO LANGUAGE: Stop reporting these as `ilambda: ...` errors
+     ; when `clambda` uses this too.
      (unless (list? arg-vars)
        (error "ilambda: expected the argument list to be a list"))
      (unless (andmap symbol? arg-vars)
@@ -269,28 +285,30 @@
 ; evaluates the body each time it's called.
 (define fexpress-ilambda
   (makeshift-fexpr
-    #;macroexpand
-    (lambda (env cont op-var args)
-      #f)
-    #;apply
-    (lambda (env cont args)
-      (match-define (parsed-lambda-args n arg-vars body)
-        (parse-lambda-args args))
-      (continuation-expr-continue-eval cont
-        (not-actually-symbolic
-          (lambda arg-values
-            (unless (equal? n (length arg-values))
-              (error "ilambda: wrong number of arguments at call time"))
-            (define body-env
-              (for/fold ([env env])
-                        ([arg-var (in-list arg-vars)]
-                        [arg-value (in-list arg-values)])
-                (hash-set env arg-var
-                  (symbolic (specific-value/t_ arg-value)
-                            (local-compilation-result arg-var)))))
-            (symbolic-get-value
-              (fexpress-eval body-env (done/ce (any-value/t+))
-                             body))))))))
+    #;continue-eval/t_
+    (lambda (cont op/t_)
+      ; TODO LANGUAGE: Consider moving this branch to methods on the
+      ; `gen:continuation-expr` generic interface.
+      (match cont
+        [(apply/ce env args cont)
+         (match-define (parsed-lambda-args n arg-vars body)
+           (parse-lambda-args args))
+         (type_-continue-eval/t_ cont
+           (specific-value/t_
+             (lambda arg-values
+               (unless (equal? n (length arg-values))
+                 (error "ilambda: wrong number of arguments at call time"))
+               (define body-env
+                 (for/fold ([env env])
+                           ([arg-var (in-list arg-vars)]
+                            [arg-value (in-list arg-values)])
+                   (hash-set env arg-var
+                     (specific-variable-bound-value/t_ arg-var
+                                                       arg-value))))
+               (type_-eval
+                 (fexpress-eval/t_ body-env (done/ce (any-value/t+))
+                                   body)))))]
+        [_ (continuation-expr-continue-eval/t_ cont op/t_)]))))
 
 (define (compile-clambda env cont args)
   (match-define (parsed-lambda-args n arg-vars body)
@@ -301,12 +319,12 @@
       (hash-set env arg-var
         ; TODO LANGUAGE: Make the negative types here depend on
         ; `cont`.
-        (symbolic (local-value/t_)
-                  (local-compilation-result arg-var)))))
+        (unknown-value/t_ (local-compilation-result arg-var)))))
   (match-define
     (compilation-result depends-on-env? body-free-vars body-compiled)
-    ; TODO LANGUAGE: Make the continuation here depend on `cont`.
-    (fexpress-compile body-env (done/ce (any-value/t+)) body))
+    (type_-compile
+      ; TODO LANGUAGE: Make the continuation here depend on `cont`.
+      (fexpress-eval/t_ body-env (done/ce (any-value/t+)) body)))
   (define body-with-env-compiled
     (if depends-on-env?
       `(,#'let
@@ -314,14 +332,11 @@
            (,#'hash-set* env
              ,@(append*
                  (for/list ([arg-var (in-list arg-vars)])
-                   (define local-arg-var
-                     (format-local-symbol arg-var))
-                   `(',arg-var
-                      (,#'symbolic
-                        (,#'specific-value/t_ ,local-arg-var)
-                        ,(gen-local-compilation-result
-                           arg-var
-                           local-arg-var))))))])
+                   `(
+                      ',arg-var
+                      (,#'specific-variable-bound-value/t_
+                        (,#'quote ,arg-var)
+                        ,(format-local-symbol arg-var))))))])
          ,body-compiled)
       body-compiled))
   (define free-vars
@@ -335,55 +350,61 @@
        ,body-with-env-compiled))
   (compilation-result depends-on-env? free-vars lambda-compiled))
 
+(define (compilation-result-eval env compiled)
+  (match-define
+    (compilation-result depends-on-env? free-vars lambda-compiled)
+    compiled)
+  (define free-vars-list (hash-keys free-vars))
+  (define local-free-vars-list
+    (for/list ([free-var (in-list free-vars-list)])
+      (format-local-symbol free-var)))
+  (define lambda-maker-compiled
+    `(,#'lambda (env ,@local-free-vars-list)
+       ,lambda-compiled))
+  ; TODO: Figure out a better way to make these conditional than
+  ; commenting them out.
+;  (displayln "about to eval")
+;  (pretty-print (syntax->datum (datum->syntax #f lambda-maker-compiled)))
+  (define lambda-maker
+    (eval lambda-maker-compiled
+          (namespace-anchor->namespace here)))
+  (define free-var-type_-list
+    (for/list ([free-var (in-list free-vars-list)])
+      (environment-get/t_ env free-var)))
+  (define free-var-val-list
+    (for/list ([val/t_ (in-list free-var-type_-list)])
+      (type_-eval val/t_)))
+  (apply lambda-maker
+    (for/fold ([lambda-maker-env env])
+              ([free-var (in-list free-vars-list)]
+               [val/t_ (in-list free-var-type_-list)])
+      (hash-set lambda-maker-env free-var
+        (at-variable/t_ free-var val/t_)))
+    free-var-val-list))
+
+
 ; A compiled lambda. This doesn't attempt to compile the body. It
 ; evaluates the body each time it's called.
 (define fexpress-clambda
   (makeshift-fexpr
-    #;macroexpand
-    (lambda (env cont op-var args)
-      (continuation-expr-continue-compile cont
-        (compile-clambda env cont args)))
-    #;apply
-    (lambda (env cont args)
-      (match-define
-        (compilation-result depends-on-env? free-vars lambda-compiled)
-        (compile-clambda env cont args))
-      (define free-vars-list (hash-keys free-vars))
-      (define local-free-vars-list
-        (for/list ([free-var (in-list free-vars-list)])
-          (format-local-symbol free-var)))
-      (define lambda-maker-compiled
-        `(,#'lambda (env ,@local-free-vars-list)
-           ,lambda-compiled))
-      ; TODO: Figure out a better way to make these conditional than
-      ; commenting them out.
-;      (displayln "about to eval")
-;      (pretty-print (syntax->datum (datum->syntax #f lambda-maker-compiled)))
-      (define lambda-maker
-        (eval lambda-maker-compiled
-              (namespace-anchor->namespace here)))
-      (continuation-expr-continue-eval cont
-        (not-actually-symbolic
-          (apply lambda-maker
-            (for/fold ([lambda-maker-env env])
-                      ([free-var (in-list free-vars-list)]
-                      [local-free-var (in-list local-free-vars-list)])
-              (match-define (symbolic existing-type_ existing-compiled)
-                (hash-ref env free-var
-                  (lambda ()
-                    (error "Internal error in the Fexpress proof of concept"))))
-              (hash-set lambda-maker-env free-var
-                (symbolic existing-type_
-                          (local-compilation-result-already-formatted
-                            free-var local-free-var))))
-            (for/list ([free-var (in-list free-vars-list)])
-              (symbolic-get-value
-                (environment-get env free-var)))))))))
+    #;continue-eval/t_
+    (lambda (cont op/t_)
+      ; TODO LANGUAGE: Consider moving this branch to methods on the
+      ; `gen:continuation-expr` generic interface.
+      (match cont
+        [(apply/ce env args cont)
+         (define compiled-clambda (compile-clambda env cont args))
+         (type_-continue-eval/t_ cont
+           (lazy-value/t_
+             (lambda ()
+               (compilation-result-eval env compiled-clambda))
+             (const0 compiled-clambda)))]
+        [_ (continuation-expr-continue-eval/t_ cont op/t_)]))))
 
 (define (fexpress-make-base-env)
   (define naive-env
-    (hash 'symbolic-get-value symbolic-get-value
-          'eval fexpress-eval
+    (hash 'type_-eval type_-eval
+          'eval/t_ fexpress-eval/t_
           'done/ce done/ce
           'any-value/t+ any-value/t+
           'make-base-env fexpress-make-base-env
@@ -393,11 +414,10 @@
           '* *
           'app (lambda (op . args) (apply op args))))
   (for/hash ([(var val) (in-hash naive-env)])
-    (values var
-            (symbolic (specific-value/t_ val)
-                      (local-compilation-result var)))))
+    (values var (specific-variable-bound-value/t_ var val))))
 
 (define (fexpress-eval-in-base-env expr)
-  (symbolic-get-value
-    (fexpress-eval (fexpress-make-base-env) (done/ce (any-value/t+))
-                   expr)))
+  (type_-eval
+    (fexpress-eval/t_ (fexpress-make-base-env)
+                      (done/ce (any-value/t+))
+                      expr)))
