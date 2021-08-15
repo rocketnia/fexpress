@@ -194,65 +194,65 @@
 (define (fexpress-continue-eval/t_ env cont val/t_ val)
   (cond
     [(fexpr? val) (fexpr-continue-eval/t_ env cont val/t_ val)]
-    [(procedure? val)
+    [#t
+     ; TODO CLEANUP: Consider moving this branch to a
+     ; `continuation-expr-continue-eval-value/t_` method.
      (match cont
        [(apply/ce args cont)
-        (unless (and (list? args)
-                     (procedure-arity-includes? val (length args)))
-          (error "Wrong number of arguments to a procedure"))
-        (define arg-type_-list
-          (for/list ([arg (in-list args)])
-            (fexpress-eval/t_ env (done/ce (any-value/t+)) arg)))
-        (type_-continue-eval/t_ env cont
+        (cond
+          [(procedure? val)
+           (unless (and (list? args)
+                        (procedure-arity-includes? val (length args)))
+             (error "Wrong number of arguments to a procedure"))
+           (define arg-type_-list
+             (for/list ([arg (in-list args)])
+               (fexpress-eval/t_ env (done/ce (any-value/t+)) arg)))
+           (type_-continue-eval/t_ env cont
 
-          ; TODO LAZY: Rather than just using `lazy-value/t_` here, we
-          ; could also specialize `type_-continue-eval/t_` to treat
-          ; certain procedures as being guaranteed not to return an
-          ; fexpr. That could let us use those procedure calls in
-          ; functional position without inhibiting compilation.
-          ;
-          (lazy-value/t_
-            (lambda ()
-              (apply val
-                (for/list ([arg/t_ (in-list arg-type_-list)])
-                  (type_-eval arg/t_))))
-            (lambda ()
-              (define op-compilation-result (type_-compile val/t_))
-              (define arg-compilation-results
-                (for/list ([arg/t_ (in-list arg-type_-list)])
-                  (type_-compile arg/t_)))
-              (match-define
-                (compilation-result
-                  op-depends-on-env? op-free-vars op-compiled)
-                op-compilation-result)
-              (let next ([depends-on-env? op-depends-on-env?]
-                         [free-vars op-free-vars]
-                         [rev-compiled-args (list)]
-                         [arg-compilation-results
-                          arg-compilation-results])
-                (match arg-compilation-results
-                  [(list)
-                   (compilation-result depends-on-env? free-vars
-                     `(,#'#%app ,op-compiled
-                                ,@(reverse rev-compiled-args)))]
-                  [(cons
-                     (compilation-result
-                       arg-depends-on-env? arg-free-vars compiled-arg)
-                     arg-compilation-results)
-                   (next (or depends-on-env? arg-depends-on-env?)
-                         (hash-union free-vars arg-free-vars
-                                     #:combine (match-lambda**
-                                                 [(#t #t) #t]))
-                         (cons compiled-arg rev-compiled-args)
-                         arg-compilation-results)])))))]
-       [_
-        ; TODO CLEANUP: Consider moving this branch to a
-        ; `continuation-expr-continue-eval-value/t_` method.
-        (continuation-expr-continue-eval/t_ env cont val/t_)])]
-    [#t
-     (match cont
-       [(apply/ce args cont) (error "Uncallable value")]
-       [_  (continuation-expr-continue-eval/t_ env cont val/t_)])]))
+             ; TODO LAZY: Rather than just using `lazy-value/t_` here,
+             ; we could also specialize `type_-continue-eval/t_` to
+             ; treat certain procedures as being guaranteed not to
+             ; return an fexpr. That could let us use those procedure
+             ; calls in  functional position without inhibiting
+             ; compilation.
+             ;
+             (lazy-value/t_
+               (lambda ()
+                 (apply val
+                   (for/list ([arg/t_ (in-list arg-type_-list)])
+                     (type_-eval arg/t_))))
+               (lambda ()
+                 (define op-compilation-result (type_-compile val/t_))
+                 (define arg-compilation-results
+                   (for/list ([arg/t_ (in-list arg-type_-list)])
+                     (type_-compile arg/t_)))
+                 (match-define
+                   (compilation-result
+                     op-depends-on-env? op-free-vars op-compiled)
+                   op-compilation-result)
+                 (let next ([depends-on-env? op-depends-on-env?]
+                            [free-vars op-free-vars]
+                            [rev-compiled-args (list)]
+                            [arg-compilation-results
+                             arg-compilation-results])
+                   (match arg-compilation-results
+                     [(list)
+                      (compilation-result depends-on-env? free-vars
+                        `(,#'#%app ,op-compiled
+                                   ,@(reverse rev-compiled-args)))]
+                     [(cons
+                        (compilation-result arg-depends-on-env?
+                                            arg-free-vars
+                                            compiled-arg)
+                        arg-compilation-results)
+                      (next (or depends-on-env? arg-depends-on-env?)
+                            (hash-union free-vars arg-free-vars
+                                        #:combine (match-lambda**
+                                                    [(#t #t) #t]))
+                            (cons compiled-arg rev-compiled-args)
+                            arg-compilation-results)])))))]
+          [#t (error "Uncallable value")])]
+       [_ (continuation-expr-continue-eval/t_ env cont val/t_)])]))
 
 (struct compilation-result (depends-on-env? free-vars expr)
   #:transparent)
