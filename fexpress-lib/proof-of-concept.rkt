@@ -21,13 +21,14 @@
 
 
 (require (only-in racket/contract/base -> any/c contract-out listof))
+(require (only-in racket/function const))
+(require (only-in racket/generic define-generics))
+(require (only-in racket/hash hash-union))
 (require (only-in racket/list append*))
 (require (only-in racket/match match match-define match-lambda**))
 ; TODO: Figure out a better way to make this conditional than
 ; commenting it out.
 ;(require (only-in racket/pretty pretty-print))
-(require (only-in racket/generic define-generics))
-(require (only-in racket/hash hash-union))
 (require (only-in racket/syntax format-symbol))
 
 
@@ -49,11 +50,6 @@
 (define-namespace-anchor here)
 
 
-(define (const0 result)
-  (lambda ()
-    result))
-
-
 (define-generics fexpr
   (fexpr-continue-eval/t+ env cont fexpr/t+ fexpr))
 
@@ -66,7 +62,7 @@
 (define-generics continuation-expr
   (continuation-expr-continue-eval/t+ env continuation-expr val/t+))
 
-; Negative types.
+; Positive types.
 (define-generics type+
   (type+-eval type+)
   (type+-compile type+)
@@ -122,14 +118,13 @@
         (at-variable/t+ free-var val/t+)))
     free-var-val-list))
 
-; Positive types.
+; Negative types.
 (define-generics type_
-  (type_-continue-eval/t+ env type_ val/t+))
+  )
 
 (struct any-value/t_ () #:transparent
   #:methods gen:type_
-  [(define (type_-continue-eval/t+ env type_ val/t+)
-     val/t+)])
+  [])
 
 ; TODO LANGUAGE: Consider letting it be an error for this type to be
 ; ascribed to a non-function (e.g., a number or an fexpr). Currently,
@@ -140,8 +135,7 @@
 ;
 (struct ->/t_ (arg-type+-list return/t_) #:transparent
   #:methods gen:type_
-  [(define (type_-continue-eval/t+ env type_ val/t+)
-     val/t+)])
+  [])
 
 (struct lazy-value/t+ (eval compile) #:transparent
   #:methods gen:type+
@@ -153,7 +147,7 @@
      (compile))
    (define (at-variable/t+ var type+)
      (match-define (lazy-value/t+ eval compile) type+)
-     (lazy-value/t+ eval (const0 (local-compilation-result var))))
+     (lazy-value/t+ eval (const (local-compilation-result var))))
    (define (type+-continue-eval/t+ env cont val/t+)
      (continuation-expr-continue-eval/t+ env cont val/t+))])
 
@@ -215,8 +209,7 @@
 (struct done/ce (type_) #:transparent
   #:methods gen:continuation-expr
   [(define (continuation-expr-continue-eval/t+ env cont val/t+)
-     (match-define (done/ce type_) cont)
-     (type_-continue-eval/t+ env type_ val/t+))])
+     val/t+)])
 
 (struct apply/ce (args next) #:transparent
   #:methods gen:continuation-expr
@@ -264,8 +257,8 @@
        ; could also specialize `type+-continue-eval/t+` to raise an
        ; error if a literal is used in functional position.
        (lazy-value/t+
-         (const0 val)
-         (const0
+         (const val)
+         (const
            (compilation-result #f (hash) `(,#'#%datum . ,val)))))]
     [_ (error "Unrecognized expression")]))
 
@@ -513,7 +506,7 @@
            (lazy-value/t+
              (lambda ()
                (compilation-result-eval env compiled-clambda))
-             (const0 compiled-clambda)))]
+             (const compiled-clambda)))]
         [_ (continuation-expr-continue-eval/t+ env cont op/t+)]))))
 
 ; Type ascription. The usage is `(the val/t_ val)`, where `val/t_` is
