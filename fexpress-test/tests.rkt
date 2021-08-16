@@ -70,9 +70,9 @@
           ; down efficiently and that a version without an annotation
           ; as specific as this does not.
           ;
-          `(the ,(->/t+ (list (non-fexpr-value/t_))
-                   (->/t+ (list (non-fexpr-value/t_))
-                     (any-value/t+)))
+          `(the ,(->/t_ (list (non-fexpr-value/t+))
+                   (->/t_ (list (non-fexpr-value/t+))
+                     (any-value/t_)))
              (clambda (f)
                (clambda (g)
                  (clambda (x)
