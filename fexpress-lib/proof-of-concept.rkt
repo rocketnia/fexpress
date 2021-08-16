@@ -375,13 +375,13 @@
 ;   * `apply/ce`
 ;   * `fexpress-eval/t+`
 ;   * `unknown-non-fexpr-apply/t+`
-;   * `fexpress-continue-eval/t+`
+;   * `any-value-continue-eval/t+`
 ;
 ; Each element of the following 3-path depends on each one adjacent to
 ; it (without wrapping):
 ;
 ;   * `specific-value/t+`
-;   * `fexpress-continue-eval/t+`
+;   * `any-value-continue-eval/t+`
 ;   * `apply/ce`
 ;
 ; Cycles of other lengths may be traced through the relationships
@@ -404,7 +404,7 @@
      (specific-variable-bound-value/t+ var val))
    (define (type+-continue-eval/t+ env cont val/t+)
      (match-define (specific-variable-bound-value/t+ var val) val/t+)
-     (fexpress-continue-eval/t+ env cont val/t+ val))])
+     (any-value-continue-eval/t+ env cont val/t+ val))])
 
 ; Field contract:
 ; any/c
@@ -420,7 +420,7 @@
      (specific-variable-bound-value/t+ var value))
    (define (type+-continue-eval/t+ env cont val/t+)
      (match-define (specific-value/t+ value) val/t+)
-     (fexpress-continue-eval/t+ env cont val/t+ value))])
+     (any-value-continue-eval/t+ env cont val/t+ value))])
 
 
 
@@ -455,7 +455,7 @@
        (lazy-value/t+
          (lambda ()
            (type+-eval
-             (fexpress-continue-eval/t+
+             (any-value-continue-eval/t+
                env
                (apply/ce args (done/ce (any-value/t_)))
                val/t+
@@ -602,7 +602,7 @@
 ; The given `val/t+` type should be a type which evaluates to the
 ; value `val`.
 ;
-(define (fexpress-continue-eval/t+ env cont val/t+ val)
+(define (any-value-continue-eval/t+ env cont val/t+ val)
   (cond
     [(fexpr? val) (fexpr-continue-eval/t+ env cont val/t+ val)]
     [#t
