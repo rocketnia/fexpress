@@ -269,9 +269,8 @@
            (compilation-result #f (hash) `(,#'#%datum . ,val)))))]
     [_ (error "Unrecognized expression")]))
 
-(define
-  (non-fexpr-continue-eval-helper/t_
-    env cont val-to-eval/t_ val-to-compile/t_ args)
+(define (unknown-non-fexpr-apply/t_
+          env cont val-to-eval/t_ val-to-compile/t_ args)
   (define arg-type_-list
     (for/list ([arg (in-list args)])
       (fexpress-eval/t_ env (done/ce (any-value/t+)) arg)))
@@ -301,8 +300,7 @@
         (let next ([depends-on-env? op-depends-on-env?]
                    [free-vars op-free-vars]
                    [rev-compiled-args (list)]
-                   [arg-compilation-results
-                    arg-compilation-results])
+                   [arg-compilation-results arg-compilation-results])
           (match arg-compilation-results
             [(list)
              (compilation-result depends-on-env? free-vars
@@ -333,7 +331,7 @@
            (unless (and (list? args)
                         (procedure-arity-includes? val (length args)))
              (error "Wrong number of arguments to a procedure"))
-           (non-fexpr-continue-eval-helper/t_
+           (unknown-non-fexpr-apply/t_
              env cont (specific-value/t_ val) val/t_ args)]
           [#t (error "Uncallable value")])]
        [_ (continuation-expr-continue-eval/t_ env cont val/t_)])]))
@@ -343,7 +341,7 @@
   ; `continuation-expr-continue-eval-value/t_` method.
   (match cont
     [(apply/ce args cont)
-     (non-fexpr-continue-eval-helper/t_ env cont val/t_ val/t_ args)]
+     (unknown-non-fexpr-apply/t_ env cont val/t_ val/t_ args)]
     [_ (continuation-expr-continue-eval/t_ env cont val/t_)]))
 
 ; TODO LANGUAGE: Consider letting it be an error for this type to be
