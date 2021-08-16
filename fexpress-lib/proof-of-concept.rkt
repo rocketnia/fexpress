@@ -36,10 +36,10 @@
     [fexpress-eval-in-base-env (-> any/c any/c)]
 
     ; TODO: Document these other exports.
-    [type+? (-> any/c boolean?)]
     [type_? (-> any/c boolean?)]
-    [any-value/t+ (-> type+?)]
+    [type+? (-> any/c boolean?)]
     [any-value/t_ (-> type_?)]
+    [any-value/t+ (-> type+?)]
     [non-fexpr-value/t_ (-> type_?)]
     [->/t+ (-> (listof type_?) type+? type+?)]))
 
@@ -49,11 +49,78 @@
 (define-namespace-anchor here)
 
 
+(define (const0 result)
+  (lambda ()
+    result))
+
+
 (define-generics fexpr
   (fexpr-continue-eval/t_ env cont fexpr/t_ fexpr))
 
+(struct makeshift-fexpr (continue-eval/t_) #:transparent
+  #:methods gen:fexpr
+  [(define (fexpr-continue-eval/t_ env cont op/t_ op)
+     (match-define (makeshift-fexpr continue-eval/t_) op)
+     (continue-eval/t_ env cont op/t_))])
+
 (define-generics continuation-expr
   (continuation-expr-continue-eval/t_ env continuation-expr val/t_))
+
+; Negative types.
+(define-generics type_
+  (type_-eval type_)
+  (type_-compile type_)
+  (at-variable/t_ var type_)
+  (type_-continue-eval/t_ env cont type_))
+
+(define (format-local-symbol sym)
+  (format-symbol "-~a" sym))
+
+(define (environment-get/t_ env var)
+  (hash-ref env var
+    (lambda ()
+      (raise-arguments-error 'environment-get/t_
+        "Unbound variable"
+        "var" var
+        "env" env))))
+
+(struct compilation-result (depends-on-env? free-vars expr)
+  #:transparent)
+
+(define (local-compilation-result var)
+  (compilation-result #f (hash var #t) (format-local-symbol var)))
+
+(define (compilation-result-eval env compiled)
+  (match-define
+    (compilation-result depends-on-env? free-vars lambda-compiled)
+    compiled)
+  (define free-vars-list (hash-keys free-vars))
+  (define local-free-vars-list
+    (for/list ([free-var (in-list free-vars-list)])
+      (format-local-symbol free-var)))
+  (define lambda-maker-compiled
+    `(,#'lambda (env ,@local-free-vars-list)
+       ,lambda-compiled))
+  ; TODO: Figure out a better way to make these conditional than
+  ; commenting them out.
+;  (displayln "about to eval")
+;  (pretty-print (syntax->datum (datum->syntax #f lambda-maker-compiled)))
+  (define lambda-maker
+    (eval lambda-maker-compiled
+          (namespace-anchor->namespace here)))
+  (define free-var-type_-list
+    (for/list ([free-var (in-list free-vars-list)])
+      (environment-get/t_ env free-var)))
+  (define free-var-val-list
+    (for/list ([val/t_ (in-list free-var-type_-list)])
+      (type_-eval val/t_)))
+  (apply lambda-maker
+    (for/fold ([lambda-maker-env env])
+              ([free-var (in-list free-vars-list)]
+               [val/t_ (in-list free-var-type_-list)])
+      (hash-set lambda-maker-env free-var
+        (at-variable/t_ free-var val/t_)))
+    free-var-val-list))
 
 ; Positive types.
 (define-generics type+
@@ -76,12 +143,44 @@
   [(define (type+-continue-eval/t_ env type+ val/t_)
      val/t_)])
 
-; Negative types.
-(define-generics type_
-  (type_-eval type_)
-  (type_-compile type_)
-  (at-variable/t_ var type_)
-  (type_-continue-eval/t_ env cont type_))
+(struct lazy-value/t_ (eval compile) #:transparent
+  #:methods gen:type_
+  [(define (type_-eval type_)
+     (match-define (lazy-value/t_ eval compile) type_)
+     (eval))
+   (define (type_-compile type_)
+     (match-define (lazy-value/t_ eval compile) type_)
+     (compile))
+   (define (at-variable/t_ var type_)
+     (match-define (lazy-value/t_ eval compile) type_)
+     (lazy-value/t_ eval (const0 (local-compilation-result var))))
+   (define (type_-continue-eval/t_ env cont val/t_)
+     (continuation-expr-continue-eval/t_ env cont val/t_))])
+
+(struct unknown-value/t_ (val-compiled) #:transparent
+  #:methods gen:type_
+  [(define (type_-eval type_)
+     (raise-arguments-error 'type_-eval
+       "Tried to evaluate the value level of a negative type that represented a run-time value during compilation. This may be an internal bug in the Fexpress proof of concept."
+       "negative type" type_))
+   (define (type_-compile type_)
+     (match-define (unknown-value/t_ val-compiled) type_)
+     val-compiled)
+   (define (at-variable/t_ var type_)
+     (unknown-value/t_ (local-compilation-result var)))
+   (define (type_-continue-eval/t_ env cont val/t_)
+     (continuation-expr-continue-eval/t_ env cont val/t_))])
+
+(struct any-value/t_ () #:transparent
+  #:methods gen:type_
+  [(define (type_-eval type_)
+     (error "tried to evaluate the value level of the ascribed type `(any-value/t_)`"))
+   (define (type_-compile type_)
+     (error "tried to compile the value level of the ascribed type `(any-value/t_)`"))
+   (define (at-variable/t_ var type_)
+     (unknown-value/t_ (local-compilation-result var)))
+   (define (type_-continue-eval/t_ env cont val/t_)
+     (continuation-expr-continue-eval/t_ env cont val/t_))])
 
 (struct specific-variable-bound-value/t_ (var val) #:transparent
   #:methods gen:type_
@@ -112,81 +211,6 @@
    (define (type_-continue-eval/t_ env cont val/t_)
      (match-define (specific-value/t_ value) val/t_)
      (fexpress-continue-eval/t_ env cont val/t_ value))])
-
-(struct unknown-value/t_ (val-compiled) #:transparent
-  #:methods gen:type_
-  [(define (type_-eval type_)
-     (raise-arguments-error 'type_-eval
-       "Tried to evaluate the value level of a negative type that represented a run-time value during compilation. This may be an internal bug in the Fexpress proof of concept."
-       "negative type" type_))
-   (define (type_-compile type_)
-     (match-define (unknown-value/t_ val-compiled) type_)
-     val-compiled)
-   (define (at-variable/t_ var type_)
-     (unknown-value/t_ (local-compilation-result var)))
-   (define (type_-continue-eval/t_ env cont val/t_)
-     (continuation-expr-continue-eval/t_ env cont val/t_))])
-
-(define (const0 result)
-  (lambda ()
-    result))
-
-(struct lazy-value/t_ (eval compile) #:transparent
-  #:methods gen:type_
-  [(define (type_-eval type_)
-     (match-define (lazy-value/t_ eval compile) type_)
-     (eval))
-   (define (type_-compile type_)
-     (match-define (lazy-value/t_ eval compile) type_)
-     (compile))
-   (define (at-variable/t_ var type_)
-     (match-define (lazy-value/t_ eval compile) type_)
-     (lazy-value/t_ eval (const0 (local-compilation-result var))))
-   (define (type_-continue-eval/t_ env cont val/t_)
-     (continuation-expr-continue-eval/t_ env cont val/t_))])
-
-(struct any-value/t_ () #:transparent
-  #:methods gen:type_
-  [(define (type_-eval type_)
-     (error "tried to evaluate the value level of the ascribed type `(any-value/t_)`"))
-   (define (type_-compile type_)
-     (error "tried to compile the value level of the ascribed type `(any-value/t_)`"))
-   (define (at-variable/t_ var type_)
-     (unknown-value/t_ (local-compilation-result var)))
-   (define (type_-continue-eval/t_ env cont val/t_)
-     (continuation-expr-continue-eval/t_ env cont val/t_))])
-
-; TODO LANGUAGE: Consider letting it be an error for this type to be
-; ascribed to an fexpr. Currently, it's just used opportunistically to
-; optimize the body of a `clambda`.
-(struct non-fexpr-value/t_ () #:transparent
-  #:methods gen:type_
-  [(define (type_-eval type_)
-     (error "tried to evaluate the value level of the ascribed type `(non-fexpr-value/t_)`"))
-   (define (type_-compile type_)
-     (error "tried to compile the value level of the ascribed type `(non-fexpr-value/t_)`"))
-   (define (at-variable/t_ var type_)
-     (variable-bound-non-fexpr-value/t_ var))
-   (define (type_-continue-eval/t_ env cont val/t_)
-     (non-fexpr-continue-eval/t_ env cont val/t_))])
-
-; TODO LANGUAGE: Consider letting it be an error for this type to be
-; ascribed to an fexpr. Currently, it's just used opportunistically to
-; optimize the body of a `clambda`.
-(struct variable-bound-non-fexpr-value/t_ (var) #:transparent
-  #:methods gen:type_
-  [(define (type_-eval type_)
-     ; TODO: Figure out if we should report this error in terms of
-     ; `variable-bound-non-fexpr-value/t_` even though it's more of an
-     ; implementation detail.
-     (error "tried to evaluate the value level of the ascribed type `(non-fexpr-value/t_)`"))
-   (define (type_-compile type_)
-     (match-define (variable-bound-non-fexpr-value/t_ var) type_)
-     (local-compilation-result var))
-   (define (at-variable/t_ var type_)
-     (variable-bound-non-fexpr-value/t_ var))
-   (define (type_-continue-eval/t_ env cont val/t_)
-     (non-fexpr-continue-eval/t_ env cont val/t_))])
 
 (struct done/ce (type+) #:transparent
   #:methods gen:continuation-expr
@@ -225,12 +249,6 @@
                      (,#'done/ce (,#'any-value/t+)))
                    (,#'specific-value/t_ ,op-compiled))))))))])
 
-(struct makeshift-fexpr (continue-eval/t_) #:transparent
-  #:methods gen:fexpr
-  [(define (fexpr-continue-eval/t_ env cont op/t_ op)
-     (match-define (makeshift-fexpr continue-eval/t_) op)
-     (continue-eval/t_ env cont op/t_))])
-
 (define (literal? v)
   (exact-integer? v))
 
@@ -250,14 +268,6 @@
          (const0
            (compilation-result #f (hash) `(,#'#%datum . ,val)))))]
     [_ (error "Unrecognized expression")]))
-
-(define (environment-get/t_ env var)
-  (hash-ref env var
-    (lambda ()
-      (raise-arguments-error 'environment-get/t_
-        "Unbound variable"
-        "var" var
-        "env" env))))
 
 (define
   (non-fexpr-continue-eval-helper/t_
@@ -310,14 +320,6 @@
                    (cons compiled-arg rev-compiled-args)
                    arg-compilation-results)]))))))
 
-(define (non-fexpr-continue-eval/t_ env cont val/t_)
-  ; TODO CLEANUP: Consider moving this branch to a
-  ; `continuation-expr-continue-eval-value/t_` method.
-  (match cont
-    [(apply/ce args cont)
-     (non-fexpr-continue-eval-helper/t_ env cont val/t_ val/t_ args)]
-    [_ (continuation-expr-continue-eval/t_ env cont val/t_)]))
-
 (define (fexpress-continue-eval/t_ env cont val/t_ val)
   (cond
     [(fexpr? val) (fexpr-continue-eval/t_ env cont val/t_ val)]
@@ -336,19 +338,45 @@
           [#t (error "Uncallable value")])]
        [_ (continuation-expr-continue-eval/t_ env cont val/t_)])]))
 
-(struct compilation-result (depends-on-env? free-vars expr)
-  #:transparent)
+(define (non-fexpr-continue-eval/t_ env cont val/t_)
+  ; TODO CLEANUP: Consider moving this branch to a
+  ; `continuation-expr-continue-eval-value/t_` method.
+  (match cont
+    [(apply/ce args cont)
+     (non-fexpr-continue-eval-helper/t_ env cont val/t_ val/t_ args)]
+    [_ (continuation-expr-continue-eval/t_ env cont val/t_)]))
 
-(define (format-local-symbol sym)
-  (format-symbol "-~a" sym))
+; TODO LANGUAGE: Consider letting it be an error for this type to be
+; ascribed to an fexpr. Currently, it's just used opportunistically to
+; optimize the body of a `clambda`.
+(struct variable-bound-non-fexpr-value/t_ (var) #:transparent
+  #:methods gen:type_
+  [(define (type_-eval type_)
+     ; TODO: Figure out if we should report this error in terms of
+     ; `variable-bound-non-fexpr-value/t_` even though it's more of an
+     ; implementation detail.
+     (error "tried to evaluate the value level of the ascribed type `(non-fexpr-value/t_)`"))
+   (define (type_-compile type_)
+     (match-define (variable-bound-non-fexpr-value/t_ var) type_)
+     (local-compilation-result var))
+   (define (at-variable/t_ var type_)
+     (variable-bound-non-fexpr-value/t_ var))
+   (define (type_-continue-eval/t_ env cont val/t_)
+     (non-fexpr-continue-eval/t_ env cont val/t_))])
 
-(define (local-compilation-result-already-formatted var formatted-var)
-  (compilation-result #f (hash var #t) formatted-var))
-
-(define (local-compilation-result var)
-  (local-compilation-result-already-formatted
-    var
-    (format-local-symbol var)))
+; TODO LANGUAGE: Consider letting it be an error for this type to be
+; ascribed to an fexpr. Currently, it's just used opportunistically to
+; optimize the body of a `clambda`.
+(struct non-fexpr-value/t_ () #:transparent
+  #:methods gen:type_
+  [(define (type_-eval type_)
+     (error "tried to evaluate the value level of the ascribed type `(non-fexpr-value/t_)`"))
+   (define (type_-compile type_)
+     (error "tried to compile the value level of the ascribed type `(non-fexpr-value/t_)`"))
+   (define (at-variable/t_ var type_)
+     (variable-bound-non-fexpr-value/t_ var))
+   (define (type_-continue-eval/t_ env cont val/t_)
+     (non-fexpr-continue-eval/t_ env cont val/t_))])
 
 (struct parsed-lambda-args (n arg-vars body) #:transparent)
 
@@ -464,39 +492,6 @@
           (format-local-symbol arg-var))
        ,body-with-env-compiled))
   (compilation-result depends-on-env? free-vars lambda-compiled))
-
-(define (compilation-result-eval env compiled)
-  (match-define
-    (compilation-result depends-on-env? free-vars lambda-compiled)
-    compiled)
-  (define free-vars-list (hash-keys free-vars))
-  (define local-free-vars-list
-    (for/list ([free-var (in-list free-vars-list)])
-      (format-local-symbol free-var)))
-  (define lambda-maker-compiled
-    `(,#'lambda (env ,@local-free-vars-list)
-       ,lambda-compiled))
-  ; TODO: Figure out a better way to make these conditional than
-  ; commenting them out.
-;  (displayln "about to eval")
-;  (pretty-print (syntax->datum (datum->syntax #f lambda-maker-compiled)))
-  (define lambda-maker
-    (eval lambda-maker-compiled
-          (namespace-anchor->namespace here)))
-  (define free-var-type_-list
-    (for/list ([free-var (in-list free-vars-list)])
-      (environment-get/t_ env free-var)))
-  (define free-var-val-list
-    (for/list ([val/t_ (in-list free-var-type_-list)])
-      (type_-eval val/t_)))
-  (apply lambda-maker
-    (for/fold ([lambda-maker-env env])
-              ([free-var (in-list free-vars-list)]
-               [val/t_ (in-list free-var-type_-list)])
-      (hash-set lambda-maker-env free-var
-        (at-variable/t_ free-var val/t_)))
-    free-var-val-list))
-
 
 ; A compiled lambda. This doesn't attempt to compile the body. It
 ; evaluates the body each time it's called.
