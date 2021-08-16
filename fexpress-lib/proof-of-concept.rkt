@@ -44,34 +44,169 @@
     [non-fexpr-value/t+ (-> type+?)]
     [->/t_ (-> (listof type+?) type_? type_?)]))
 
-; TODO: Reorganize this code. It's pretty messy.
-
 
 (define-namespace-anchor here)
 
 
+
+; ===== Documentation-only contracts =================================
+
+; A contract that recognizes this language's variable names, which are
+; represented by interned symbols.
+#;
+(define var? (and symbol? symbol-interned?))
+
+; A contract that recognizes this language's lexical environments,
+; which are represented by immutable hashes from variable names to
+; positive types. Besides being positive types, the values of the hash
+; should also have successful `type+-compile` behavior, and the
+; resulting Racket expression should be a reference to the
+; `format-local-symbol` version of the same symbol.
+#;
+(define env? (hash/c var? type+? #:immutable #t #:flat? #t))
+
+; A contract that recognizes Fexpress free variable sets, which are
+; represented by immutable hashes from variable names to `#t`.
+#;
+(define free-vars? (hash/c var? #t #:immutable #t #:flat? #t))
+
+
+
+; ===== Generic interfaces to serve as extension points ==============
+
+; An fexpr. In Fexpress, the calling convention for fexprs is a bit
+; different than it might be in other fexpr languages. They receive
+; their arguments on a continuation expression, and they can implement
+; both compilation behavior and dynamic behavior via the interface of
+; the positive types they return.
+;
 (define-generics fexpr
+
+  ; (Calls fexprs, namely this one.) Returns a positive type for the
+  ; potential values which result from transforming the given
+  ; singleton positive type and its given value (this value) according
+  ; to the series of steps and the target negative type listed in the
+  ; given continuation expression. There are many
+  ; `...-continue-eval/t+` operations in the Fexpress internals, and
+  ; this is the one to call when the actual *value* of the original
+  ; type is known and is definitely an fexpr. The fexpr can implement
+  ; its own operation-specific behavior here, or it can dispatch again
+  ; to `continuation-expr-continue-eval/t+` to handle a continuation
+  ; expression it doesn't know how to interpret itself.
+  ;
+  ; Contract:
+  ; (-> env? continuation-expr? type+? fexpr? type+?)
+  ;
+  ; The given positive type should evaluate to a value that is this
+  ; fexpr.
+  ;
   (fexpr-continue-eval/t+ env cont fexpr/t+ fexpr))
 
+; An fexpr. This way of creating an fexpr is good for when it isn't
+; necessary to give the fexpr other structure type properties. Where
+; the `gen:fexpr` interface is like `prop:procedure`, the
+; `makeshift-fexpr` interface is like `lambda`.
+;
+; Field contract:
+; (-> env? continuation-expr? type+? type+?)
+;
 (struct makeshift-fexpr (continue-eval/t+) #:transparent
   #:methods gen:fexpr
   [(define (fexpr-continue-eval/t+ env cont op/t+ op)
      (match-define (makeshift-fexpr continue-eval/t+) op)
      (continue-eval/t+ env cont op/t+))])
 
+; A continuation expression. This represents the spine of pending
+; fexpr applications (`apply/ce`) to perform in the current
+; environment and the negative type to optimize the overall result by
+; (`done/ce`). Other copatterns, like field access, could fit in here
+; as well.
+;
 (define-generics continuation-expr
+
+  ; (Calls fexprs.) Returns a positive type for the potential values
+  ; which result from transforming the given positive type according
+  ; to the series of steps and the target negative type listed in this
+  ; continuation expression. There are many `...-continue-eval/t+`
+  ; operations in the Fexpress internals, and this is the one to call
+  ; when the positive type's fexpr-calling behavior should be ignored.
+  ; This will usually result in code that consults the value at run
+  ; time and makes fexpr calls to it dynamically. A positive type
+  ; usually dispatches to this itself when its
+  ; `type+-continue-eval/t+` behavior has no better idea for what to
+  ; do.
+  ;
+  ; Contract:
+  ; (-> env? continuation-expr? type+? type+?)
+  ;
   (continuation-expr-continue-eval/t+ env continuation-expr val/t+))
 
-; Positive types.
+; A positive type. Positive types in Fexpress arguably act less like
+; types and more like symbolic values.
 (define-generics type+
+
+  ; Assuming the type is a singleton type of a known value, get that
+  ; value.
+  ;
+  ; Contract:
+  ; (-> type+? any/c)
+  ;
   (type+-eval type+)
+
+  ; Assuming the type is a type of potential values that are known to
+  ; have a certain compiled form in the environment the type belongs
+  ; to, gets that compiled form.
+  ;
+  ; Contract:
+  ; (-> type+? compilation-result?)
+  ;
   (type+-compile type+)
+
+  ; Replaces the type's compilation result so that it refers to the
+  ; given Fexpress variable. This should be done to any type that's
+  ; added to the environment, since it's now in scope under a
+  ; dedicated name.
+  ;
+  ; Contract:
+  ; (-> var? type+? type+?)
+  ;
   (at-variable/t+ var type+)
+
+  ; (Calls fexprs.) Returns a positive type for the potential values
+  ; which result from transforming this type according to a series of
+  ; steps and a target type listed in the given continuation
+  ; expression. There are many `...-continue-eval/t+` operations in
+  ; the Fexpress internals, but this is the most general one; it
+  ; dispatches to the others.
+  ;
+  ; Contract:
+  ; (-> env? continuation-expr? type+? type+?)
+  ;
   (type+-continue-eval/t+ env cont type+))
 
+; A negative type. Fexpress's fexprs can use these as optimization
+; hints. There are no methods because each fexpr may have different
+; kinds of special cases it's looking to optimize. (That's not to say
+; we wouldn't add methods if we turned out to have a use for them.)
+;
+(define-generics type_
+  )
+
+
+
+; ===== Utilities for compiling to Racket ============================
+
+; Converts an Fexpress variable name into the Racket variable name
+; that the Fexpress internals compile it into.
+;
+; Contract:
+; (-> var? symbol?)
+;
 (define (format-local-symbol sym)
   (format-symbol "-~a" sym))
 
+; Contract:
+; (-> env? var? type+?)
 (define (environment-get/t+ env var)
   (hash-ref env var
     (lambda ()
@@ -80,12 +215,50 @@
         "var" var
         "env" env))))
 
+; Field contracts:
+; boolean? free-vars? any/c
+;
+; The `expr` should be an s-expression of Racket code. It may have
+; free variables corresponding to the `format-local-symbol` versions
+; of what the Fexpress free variables would be. It may also have the
+; free variable `env` if `depends-on-env?` is `#t`. The `env` variable
+; refers to the current lexical environment. It may also have Racket
+; syntax objects, so as to refer unambiguously to Racket module
+; imports.
+;
+; Depending on the lexical environment using `depends-on-env?` can
+; lead to performance degradation in code that results, since an
+; up-to-date first-class environment value must be constructed
+; whenever variables come into scope.
+;
+; While we could make more extensive use of Racket syntax objects, we
+; keep their use to a minimum here to demonstrate this language in a
+; way that can be easily ported to other Lisp dialects.
+;
 (struct compilation-result (depends-on-env? free-vars expr)
   #:transparent)
 
+; Returns a compilation result that just refers to the given Fexpress
+; variable.
+;
+; Contract:
+; (-> var? compilation-result?)
+;
 (define (local-compilation-result var)
   (compilation-result #f (hash var #t) (format-local-symbol var)))
 
+; TODO CLEANUP: Consider implementing some `compilation-result` monad
+; operations here. They might make parts of the code more
+; straightforward for people used to monads, but I'm not sure if
+; that's the audience.
+
+; Evaluates a compilation result in a given Fexpress environment. We
+; use this to delegate to Racket's own compiler to give us optimized
+; code.
+;
+; Contract:
+; (-> env? compilation-result? any/c)
+;
 (define (compilation-result-eval env compiled)
   (match-define
     (compilation-result depends-on-env? free-vars lambda-compiled)
@@ -118,25 +291,37 @@
         (at-variable/t+ free-var val/t+)))
     free-var-val-list))
 
-; Negative types.
-(define-generics type_
-  )
+
+
+; ===== Negative types ===============================================
 
 (struct any-value/t_ () #:transparent
   #:methods gen:type_
   [])
 
-; TODO LANGUAGE: Consider letting it be an error for this type to be
-; ascribed to a non-function (e.g., a number or an fexpr). Currently,
-; it's just used opportunistically to optimize the body of a
-; `clambda`, and the only way it can raise an error is by having a
-; number of arguments that doesn't match the length of the `clambda`'s
-; argument list.
+; Creates a negative type for functions, given a list of positive
+; types for the arguments and a single negative type for the result.
+;
+; If we unpack the meaning of positive and negative types in Fexpress,
+; this is a compilation hint for expressions that return functions.
+; It supposes the given symbolic values for the arguments, and it
+; gives the given compilation hint for the function's result. For a
+; lambda form, the hint can be used for compiling the body, as
+; `fexpress-clambda` demonstrates.
+;
+; Field contracts:
+; (listof type+?) type_?
 ;
 (struct ->/t_ (arg-type+-list return/t_) #:transparent
   #:methods gen:type_
   [])
 
+
+
+; ===== Some positive types ==========================================
+
+; Field contracts:
+; (-> any/c) (-> compilation-result?)
 (struct lazy-value/t+ (eval compile) #:transparent
   #:methods gen:type+
   [(define (type+-eval type+)
@@ -151,6 +336,8 @@
    (define (type+-continue-eval/t+ env cont val/t+)
      (continuation-expr-continue-eval/t+ env cont val/t+))])
 
+; Field contract:
+; compilation-result?
 (struct unknown-value/t+ (val-compiled) #:transparent
   #:methods gen:type+
   [(define (type+-eval type+)
@@ -176,6 +363,33 @@
    (define (type+-continue-eval/t+ env cont val/t+)
      (continuation-expr-continue-eval/t+ env cont val/t+))])
 
+; -----
+; NOTE COUPLING: Past this point, several things are mutually
+; recursive. See the other NOTE COUPLING for where this ends.
+;
+; Each element of the of the following 6-cycle depends on the one
+; before (wrapping around from the first to the last):
+;
+;   * `specific-variable-bound-value/t+`
+;   * `specific-value/t+`
+;   * `apply/ce`
+;   * `fexpress-eval/t+`
+;   * `unknown-non-fexpr-apply/t+`
+;   * `fexpress-continue-eval/t+`
+;
+; Each element of the following 3-path depends on each one adjacent to
+; it (without wrapping):
+;
+;   * `specific-value/t+`
+;   * `fexpress-continue-eval/t+`
+;   * `apply/ce`
+;
+; Cycles of other lengths may be traced through the relationships
+; already described.
+; -----
+
+; Field contracts:
+; var? any/c
 (struct specific-variable-bound-value/t+ (var val) #:transparent
   #:methods gen:type+
   [(define (type+-eval type+)
@@ -192,6 +406,8 @@
      (match-define (specific-variable-bound-value/t+ var val) val/t+)
      (fexpress-continue-eval/t+ env cont val/t+ val))])
 
+; Field contract:
+; any/c
 (struct specific-value/t+ (value) #:transparent
   #:methods gen:type+
   [(define (type+-eval type+)
@@ -206,11 +422,31 @@
      (match-define (specific-value/t+ value) val/t+)
      (fexpress-continue-eval/t+ env cont val/t+ value))])
 
+
+
+; ===== Continuation expressions =====================================
+
+; A continuation expression that represents that there's nothing left
+; to do except return a value. The specified negative type can serve
+; as a hint for optimizing the value.
+;
+; Field contract:
+; type_?
+;
 (struct done/ce (type_) #:transparent
   #:methods gen:continuation-expr
   [(define (continuation-expr-continue-eval/t+ env cont val/t+)
      val/t+)])
 
+; A continuation expression that represents that the next thing to do
+; to the value is to invoke it as an fexpr with certain arguments.
+;
+; Field contracts:
+; any/c continuation-expr?
+;
+; In typical code, the `args` to an fexpr call are usually a proper
+; list.
+;
 (struct apply/ce (args next) #:transparent
   #:methods gen:continuation-expr
   [(define (continuation-expr-continue-eval/t+ env cont val/t+)
@@ -242,9 +478,30 @@
                      (,#'done/ce (,#'any-value/t_)))
                    (,#'specific-value/t+ ,op-compiled))))))))])
 
+
+
+; ===== The Fexpress combination evaluator-compiler ==================
+
+; Returns whether the given value can be used as a datum literal in
+; the Fexpress proof of concept. For this simple demonstration, we
+; just support integers.
+;
+; Contract:
+; (-> any/c boolean?)
+;
 (define (literal? v)
   (exact-integer? v))
 
+; Reduces the given Fexpress expression and continuation expression in
+; the given environment to a positive type. The resulting positive
+; type can be transformed into an evaluated result using `type+-eval`
+; or a compiled result using `type+-compile`.
+;
+; Contract:
+; (-> env continuation-expr? any/c type+?)
+;
+; The `expr` should be an s-expression of Fexpress code.
+;
 (define (fexpress-eval/t+ env cont expr)
   (match expr
     [`(,op-expr . ,args)
@@ -262,6 +519,20 @@
            (compilation-result #f (hash) `(,#'#%datum . ,val)))))]
     [_ (error "Unrecognized expression")]))
 
+; Performs a Racket-like procedure call behavor, a fallback for when
+; a value that's invoked is a general Racket value rather than an
+; Fexpress `fexpr?`.
+;
+; Contract:
+; (-> env? continuation-expr? type+? type+? any/c type+?)
+;
+; The `val-to-eval/t+` type will only be used for its `type+-eval`
+; behavior. The `val-to-compile/t+` type will only be used for its
+; `type+-compile` behavior. These can be the same type.
+;
+; In typical code, the `args` to an fexpr call are usually a proper
+; list.
+;
 (define (unknown-non-fexpr-apply/t+
           env cont val-to-eval/t+ val-to-compile/t+ args)
   (define arg-type+-list
@@ -311,6 +582,26 @@
                    (cons compiled-arg rev-compiled-args)
                    arg-compilation-results)]))))))
 
+; (Calls fexprs.) Returns a positive type for the potential values
+; which result from transforming the given singleton positive type and
+; its given value according to the series of steps and the target
+; negative type listed in the given continuation expression. There are
+; many `...-continue-eval/t+` operations in the Fexpress internals,
+; and this is the one to call when the actual *value* of the original
+; type is known and can potentially be an fexpr with its own idea of
+; how to proceed. A positive type processing a
+; `type+-continue-eval/t+` call usually dispatches to this itself when
+; the type's value is known at compile time, and a continuation
+; expression processing a `continuation-expr-continue-eval/t+` call
+; usually dispatches to this itself once the value is finally known at
+; runtime.
+;
+; Contract:
+; (-> env? continuation-expr? type+? any/c type+?)
+;
+; The given `val/t+` type should be a type which evaluates to the
+; value `val`.
+;
 (define (fexpress-continue-eval/t+ env cont val/t+ val)
   (cond
     [(fexpr? val) (fexpr-continue-eval/t+ env cont val/t+ val)]
@@ -329,6 +620,27 @@
           [#t (error "Uncallable value")])]
        [_ (continuation-expr-continue-eval/t+ env cont val/t+)])]))
 
+; -----
+; NOTE COUPLING: Above this point, several things are mutually
+; recursive. See the other NOTE COUPLING to see where this starts and
+; for more details.
+; -----
+
+; (Calls fexprs.) Returns a positive type for the potential values
+; which result from transforming the given positive type and its
+; given singleton value according to the series of steps and the
+; target negative type listed in the given continuation expression.
+; There are many `...-continue-eval/t+` operations in the Fexpress
+; internals, and this is the one to call when the positive type *and*
+; its values should have their custom fexpr-calling behavior ignored.
+; Fexpress doesn't usually ignore values' fexpr-calling behavior like
+; this, but since this can lead to better performance, it can be
+; explicitly requested by using `(the ...)` to ascribe a type that
+; uses `non-fexpr-value/t+`.
+;
+; Contract:
+; (-> env? continuation-expr? type+? type+?)
+;
 (define (non-fexpr-continue-eval/t+ env cont val/t+)
   ; TODO CLEANUP: Consider moving this branch to a
   ; `continuation-expr-continue-eval-value/t+` method.
@@ -337,9 +649,17 @@
      (unknown-non-fexpr-apply/t+ env cont val/t+ val/t+ args)]
     [_ (continuation-expr-continue-eval/t+ env cont val/t+)]))
 
-; TODO LANGUAGE: Consider letting it be an error for this type to be
-; ascribed to an fexpr. Currently, it's just used opportunistically to
-; optimize the body of a `clambda`.
+
+
+; ===== Optimization hints that a value is not an fexpr ==============
+
+; A positive type of values that we're allowing ourselves to assume to
+; be non-fexprs for optimization purposes, and which are also known to
+; be bound to the specified Fexpress variable.
+;
+; Field contract:
+; var?
+;
 (struct variable-bound-non-fexpr-value/t+ (var) #:transparent
   #:methods gen:type+
   [(define (type+-eval type+)
@@ -355,9 +675,8 @@
    (define (type+-continue-eval/t+ env cont val/t+)
      (non-fexpr-continue-eval/t+ env cont val/t+))])
 
-; TODO LANGUAGE: Consider letting it be an error for this type to be
-; ascribed to an fexpr. Currently, it's just used opportunistically to
-; optimize the body of a `clambda`.
+; A positive type of values that we're allowing ourselves to assume to
+; be non-fexprs for optimization purposes.
 (struct non-fexpr-value/t+ () #:transparent
   #:methods gen:type+
   [(define (type+-eval type+)
@@ -369,8 +688,37 @@
    (define (type+-continue-eval/t+ env cont val/t+)
      (non-fexpr-continue-eval/t+ env cont val/t+))])
 
+
+
+; ===== Fexprs for lambda operations =================================
+
+; A return value of `parse-lambda-args`.
+;
+; Field contracts:
+; natural? (listof var?) any/c
+;
+; The number `n` should be the length of `arg-vars`.
+;
+; The `arg-vars` should be mutually unique.
+;
+; The `body` should be an s-expression representing an Fexpress
+; expression.
+;
 (struct parsed-lambda-args (n arg-vars body) #:transparent)
 
+; Asserts that the given subforms are in the format expected for a
+; lambda form -- namely, a list of two elements, the first of which is
+; a list of mutually unique variables and the second of which, the
+; body, is any value. (The body is usually an s-expression
+; representing an Fexpress expression.) If the subforms do fit this
+; format, returns a `parsed-lambda-args` struct carrying the number of
+; arguments, the argument variable names, and the body. If they don't,
+; an error attributed to the operation name given by `err-name` will
+; be raised.
+;
+; Contract:
+; (-> symbol? any/c parsed-lambda-args?)
+;
 (define (parse-lambda-args err-name args)
   (match args
     [`(,arg-vars ,body)
@@ -395,8 +743,13 @@
        "expected an argument list and a body"
        "subforms" args)]))
 
-; An interpreted lambda. This doesn't attempt to compile the body. It
-; evaluates the body each time it's called.
+; An fexpr implementing an interpreted lambda operation. This doesn't
+; attempt to compile the body. The resulting function evaluates the
+; body dynamically every time it's called.
+;
+; When calling this fexpr, the subforms should be parseable according
+; to `parse-lambda-args`.
+;
 (define fexpress-ilambda
   (makeshift-fexpr
     #;continue-eval/t+
@@ -430,6 +783,20 @@
                                    body)))))]
         [_ (continuation-expr-continue-eval/t+ env cont op/t+)]))))
 
+; (A helper for `fexpress-clambda`.)
+;
+; Compiles a lambda form into a `compilation-result?`. The resulting
+; function is likely to be as fast as the equivalent Racket code
+; unless it uses Fexpress features that inhibit compilation, in which
+; case it falls back to interpreting the relevant Fexpress code.
+;
+; Contract:
+; (-> env? continuation-expr? any/c compilation-result?)
+;
+; The `args` should be parseable according to `parse-lambda-args`. If
+; they're not, an error attributed to the operation name "`clambda`"
+; will be raised.
+;
 (define (compile-clambda env cont args)
   (match-define (parsed-lambda-args n arg-vars body)
     (parse-lambda-args 'clambda args))
@@ -484,8 +851,15 @@
        ,body-with-env-compiled))
   (compilation-result depends-on-env? free-vars lambda-compiled))
 
-; A compiled lambda. This doesn't attempt to compile the body. It
-; evaluates the body each time it's called.
+; An fexpr implementing a compiled lambda operation. This attempts to
+; compile the body. The resulting function is likely to be as fast as
+; the equivalent Racket code unless it uses Fexpress features that
+; inhibit compilation, in which case it falls back to interpreting the
+; relevant Fexpress code.
+;
+; When calling this fexpr, the subforms should be parseable according
+; to `parse-lambda-args`.
+;
 (define fexpress-clambda
   (makeshift-fexpr
     #;continue-eval/t+
@@ -509,11 +883,16 @@
              (const compiled-clambda)))]
         [_ (continuation-expr-continue-eval/t+ env cont op/t+)]))))
 
-; Type ascription. The usage is `(the val/t_ val)`, where `val/t_` is
-; syntactically a negative type (not just an expression that evaluates
-; to one) and `val` is an expression the type applies to. This is
-; mainly used to allow function bodies to use Lisp-1-style function
-; application on local variables without inhibiting compilation.
+
+
+; ===== An fexpr for type ascription =================================
+
+; An fexpr implementing a type ascription operation. The usage is
+; `(the val/t_ val)`, where `val/t_` is syntactically a negative type
+; (not just an expression that evaluates to one) and `val` is an
+; expression the type applies to. The purpose of `the` is mainly to
+; allow function bodies to use Lisp-1-style function application on
+; local variables without inhibiting compilation.
 ;
 (define fexpress-the
   (makeshift-fexpr
@@ -533,6 +912,12 @@
             (error "the: expected a literal negative type and an expression")])]
         [_ (continuation-expr-continue-eval/t+ env cont op/t+)]))))
 
+
+
+; ===== The Fexpress entrypoint ======================================
+
+; Contract:
+; (-> env?)
 (define (fexpress-make-base-env)
   (define naive-env
     (hash 'type+-eval type+-eval
@@ -549,6 +934,11 @@
   (for/hash ([(var val) (in-hash naive-env)])
     (values var (specific-variable-bound-value/t+ var val))))
 
+; Contract:
+; (-> any/c any/c)
+;
+; The `expr` should be an s-expression of Fexpress code.
+;
 (define (fexpress-eval-in-base-env expr)
   (type+-eval
     (fexpress-eval/t+ (fexpress-make-base-env)
