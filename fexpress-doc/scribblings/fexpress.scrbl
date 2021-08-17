@@ -108,7 +108,7 @@ The building blocks provided here make the language capable of doing simple lamb
 }
 
 
-@subsection[#:tag "fexprs"]{Fexprs}
+@subsection[#:tag "fexpr"]{Fexprs}
 
 @defproc[(fexpr? [v any/c]) boolean?]{
   Returns whether the given value is an Fexpress fexpr.
@@ -163,7 +163,7 @@ The building blocks provided here make the language capable of doing simple lamb
   (parse-lambda-args [err-name symbol?] [args any/c])
   parsed-lambda-args?
 ]{
-  Asserts that the given subforms are in the format expected for an @racket[fexpress-ilambda] or @racket[fexpress-clambda] form---namely, a list of two elements, the first of which is a list of mutually unique variables and the second of which, the body, is any value. (The body is usually an s-expression representing an Fexpress expression.) If the subforms do fit this format, returns a @racket[parsed-lambda-args] struct carrying the number of arguments, the argument variable names, and the body. If they don't, an error attributed to the operation name given by `err-name` will be raised.
+  Asserts that the given subforms are in the format expected for an @racket[fexpress-ilambda] or @racket[fexpress-clambda] form---namely, a list of two elements, the first of which is a list of mutually unique variables and the second of which, the body, is any value. (The body is usually an s-expression representing an Fexpress expression.) If the subforms do fit this format, returns a @racket[parsed-lambda-args] struct carrying the number of arguments, the argument variable names, and the body. If they don't, an error attributed to the operation name given by @racket[err-name] will be raised.
 }
 
 @defstruct*[
@@ -214,6 +214,50 @@ The building blocks provided here make the language capable of doing simple lamb
   ]
   
   (TODO: Demonstrate that the above example is able to compile without being inhibited by dynamic fexpr features.)
+}
+
+
+@subsection[#:tag "continuation-expr"]{Continuation Expressions}
+
+@defproc[(continuation-expr? [v any/c]) boolean?]{
+  Returns whether the given value is a continuation expression.
+  
+  An Fexpress @deftech{continuation expression} is a representation of the syntax around the evaluating part of an Fexpress expression.
+  
+  Usually, this is a series of pending fexpr applications (@racket[apply/ce]) to perform in the current @racket[env?], followed by an ascribed @tech{negative type} to optimize the overall result by (@racket[done/ce]). Other kinds of copatterns or spine elements, like field or method accessor syntaxes, could fit in here as well.
+}
+
+@defthing[gen:continuation-expr any/c]{
+  A generic interface for @tech{continuation expressions}, which must implement the method @racket[continuation-expr-continue-eval/t+].
+  
+  In order to perform compilation, Fexpress fexprs usually need to know the structural details of the continuation expression that holds their arguments. Thus, when defining new continuation expressions, it's typical to define a structure type that does more than just implement the @racket[gen:continuation-expr] interface. For instance, it can also provide its predicate and field accessors as part of its intended API, or it can implement other interfaces on the side.
+}
+
+@defproc[
+  (continuation-expr-continue-eval/t+ [env env?]
+                                      [cont continuation-expr?]
+                                      [val/t+ type+?])
+  type+?
+]{
+  (Calls fexprs.) Assuming the given @tech{positive type} will have no known fexpr-calling behavior until we witness its potential values, returns another positive type for the potential values which result from transforming those according to the series of steps and the target @tech{negative type} listed in the given @tech{continuation expression}.
+  
+  There are many @tt{...-continue-eval/t+} operations in Fexpress, and this is the one to call when the positive type's fexpr-calling behavior should be ignored but its values' fexpr-calling behavior, if any, should not be ignored. This will usually result in code that consults the value at run time and makes fexpr calls to it dynamically. A positive type usually dispatches to this itself when its @racket[type+-continue-eval/t+] behavior has no better idea for what to do.
+}
+
+
+@subsubsection[#:tag "done/ce"]{A Continuation Expression for Being Done}
+
+@defstruct*[done/ce ([type_ type_?])]{
+  A @tech{continuation expression} that represents that there's nothing left to do except return a value. The specified @tech{negative type} can serve as a hint for optimizing the value.
+}
+
+
+@subsubsection[#:tag "apply/ce"]{A Continuation Expression for Fexpr Application}
+
+@defstruct*[apply/ce ([args any/c] [next continuation-expr?])]{
+  A @tech{continuation expression} that represents that the next thing to do to the value is to invoke it as an fexpr with certain arguments.
+  
+  In typical code, the @racket[_args] to an fexpr call are usually a proper list.
 }
 
 

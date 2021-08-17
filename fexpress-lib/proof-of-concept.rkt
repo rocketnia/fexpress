@@ -42,8 +42,7 @@
     [free-vars? (-> any/c boolean?)])
 
   ; Generic interfaces to serve as extension points
-  ; TODO DOCS: Document the continuation expressions and types in
-  ; their respective sections.
+  ; TODO DOCS: Document the types in their respective sections.
   gen:fexpr
   (contract-out
     [fexpr? (-> any/c boolean?)]
@@ -110,7 +109,6 @@
     [specific-value/t+ (-> any/c type+?)])
 
   ; Continuation expressions
-  ; TODO DOCS: Document these.
   (struct-out done/ce)
   (struct-out apply/ce)
 
@@ -228,23 +226,29 @@
   (lambda (fexpr . args)
     (error "attempted to call an Fexpress fexpr from Racket code, which is not supported")))
 
-; A continuation expression. This represents the spine of pending
-; fexpr applications (`apply/ce`) to perform in the current
-; environment and the negative type to optimize the overall result by
-; (`done/ce`). Other copatterns, like field access, could fit in here
-; as well.
+; A continuation expression, which is a representation of the syntax
+; around the evaluating part of an Fexpress expression.
+;
+; Usually, this is a series of pending fexpr applications (`apply/ce`)
+; to perform in the current environment, followed by an ascribed
+; negative type to optimize the overall result by (`done/ce`). Other
+; kinds of copatterns or spine elements, like field or method accessor
+; syntaxes, could fit in here as well.
 ;
 (define-generics continuation-expr
 
-  ; (Calls fexprs.) Returns a positive type for the potential values
-  ; which result from transforming the given positive type according
-  ; to the series of steps and the target negative type listed in this
+  ; (Calls fexprs.) Assuming the given positive type will have no
+  ; known fexpr-calling behavior until we witness its potential
+  ; values, returns another positive type for the potential values
+  ; which result from transforming those according to the series of
+  ; steps and the target negative type listed in the given
   ; continuation expression.
   ;
   ; There are many `...-continue-eval/t+` operations in Fexpress, and
   ; this is the one to call when the positive type's fexpr-calling
-  ; behavior should be ignored. This will usually result in code that
-  ; consults the value at run time and makes fexpr calls to it
+  ; behavior should be ignored but its values' fexpr-calling behavior,
+  ; if any, should not be ignored. This will usually result in code
+  ; that consults the value at run time and makes fexpr calls to it
   ; dynamically. A positive type usually dispatches to this itself
   ; when its `type+-continue-eval/t+` behavior has no better idea for
   ; what to do.
