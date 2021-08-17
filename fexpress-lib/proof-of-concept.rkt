@@ -83,11 +83,6 @@
     [var-compile (-> var? compilation-result?)]
     [compilation-result-eval (-> env? compilation-result? any/c)])
 
-  ; Negative types
-  ; TODO DOCS: Document these.
-  (struct-out any-value/t_)
-  (struct-out ->/t_)
-
   ; Positive types
   ;
   ; NOTE: Instead of exporting all of these as structs, we export just
@@ -107,6 +102,11 @@
     [any-value/t+ (-> type+?)]
     [non-fexpr-value/t+ (-> type+?)]
     [specific-value/t+ (-> any/c type+?)])
+
+  ; Negative types
+  ; TODO DOCS: Document these.
+  (struct-out any-value/t_)
+  (struct-out ->/t_)
 
   ; Continuation expressions
   (struct-out done/ce)
@@ -415,31 +415,6 @@
 
 
 
-; ===== Negative types ===============================================
-
-(struct any-value/t_ () #:transparent
-  #:methods gen:type_
-  [])
-
-; Creates a negative type for functions, given a list of positive
-; types for the arguments and a single negative type for the result.
-;
-; If we unpack the meaning of positive and negative types in Fexpress,
-; this is a compilation hint for expressions that return functions.
-; It supposes the given symbolic values for the arguments, and it
-; gives the given compilation hint for the function's result. For a
-; lambda form, the hint can be used for compiling the body, as
-; `fexpress-clambda` demonstrates.
-;
-; Field contracts:
-; (listof type+?) type_?
-;
-(struct ->/t_ (arg-type+-list return/t_) #:transparent
-  #:methods gen:type_
-  [])
-
-
-
 ; ===== Positive types ===============================================
 
 ; Field contracts:
@@ -587,6 +562,31 @@
    (define (type+-continue-eval/t+ env cont val/t+)
      (match-define (specific-value/t+ value) val/t+)
      (specific-value-continue-eval/t+ env cont val/t+ value))])
+
+
+
+; ===== Negative types ===============================================
+
+(struct any-value/t_ () #:transparent
+  #:methods gen:type_
+  [])
+
+; Creates a negative type for functions, given a list of positive
+; types for the arguments and a single negative type for the result.
+;
+; If we unpack the meaning of positive and negative types in Fexpress,
+; this is a compilation hint for expressions that return functions.
+; It supposes the given symbolic values for the arguments, and it
+; gives the given compilation hint for the function's result. For a
+; lambda form, the hint can be used for compiling the body, as
+; `fexpress-clambda` demonstrates.
+;
+; Field contracts:
+; (listof type+?) type_?
+;
+(struct ->/t_ (arg-type+-list return/t_) #:transparent
+  #:methods gen:type_
+  [])
 
 
 
