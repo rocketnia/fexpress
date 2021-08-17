@@ -22,8 +22,8 @@
 @(require
    (for-label
      (only-in racket/base
-       + * apply boolean? define exact-integer? hash lambda list
-       symbol?)))
+       + * and apply boolean? define exact-integer? hash lambda list
+       map symbol?)))
 @(require
    (for-label (only-in racket/contract/base any/c hash/c listof)))
 @(require (for-label (only-in racket/math natural?)))
@@ -38,13 +38,19 @@
 
 @title{Fexpress}
 
-Fexpress is a compilation-friendly fexpr language. As far as feasible, it macroexpands expressions ahead of time instead of just interpreting everything.
+Fexpress is a compilation-friendly @tech{fexpr} language. As far as feasible, it macroexpands expressions ahead of time instead of just interpreting everything.
 
-At some point, there may be two variants of Fexpress: a minimalistic and unstable version for ease of understanding the internals, and a more full-featured version for convenient integration of fexprs with Racket programming. For now, only the first exists.
+At some point, there may be two variants of Fexpress.
 
-(TODO: Finish documenting it.)
+The current variant---@racketmodname[fexpress/proof-of-concept]---is intended to help demonstrate the principles at work. For this reason, it has only a minimalistic set of features, it doesn't have deep library dependencies, and we haven't gone to any special effort to harden its API for future stability. If the concepts that need to be demonstrated change, we might add newly needed methods to some of the generic interfaces, might allow an @racket[env?] to be something more expressive or restrictive than a hash table, and so on.
 
-(TODO: Currently, there isn't actually an operation for writing simple fexprs. Fexpress users can build one, but let's have one that's built in.)
+The other variant of Fexpress---potentially the @racketmodname[fexpress] module proper, once it exists---could be a more full-fledged system for using fexprs in Racket programs. This variant could better preserve Racket syntax object metadata for error reporting and Racket-style hygiene, and it could introduce features like editor highlighting to show what subexpressions of a program are making unoptimized fexpr calls.
+
+Seamlessness is not a particular goal of either variant of Fexpress. It might be tempting to ask whether we'll be able to pass Racket's @racket[and] to Racket's @racket[map], but the answers as they apply to Fexpress will likely be pretty boring: The @racket[map] abstraction hides its implementation by design, so it should not hand off its internal code to an fexpr. The @racket[and] abstraction expects input in the form of an uncompiled list of subforms, and a bundle of fully evaluated positional arguments and keyword arguments is not the same thing, so it's fine for @racket[and] to be unprepared for it and to reject it as a usage error. These remain good design choices even in a language that has fexprs in it.
+
+(TODO: Finish documenting everything. As you can see, some things are currently red links.)
+
+(TODO: Currently, there isn't actually an operation for writing simple fexprs. Fexpress users can build one, but let's provide one for demonstration purposes.)
 
 
 
