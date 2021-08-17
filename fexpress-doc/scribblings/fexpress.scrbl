@@ -357,6 +357,39 @@ The type system in the Fexpress proof of concept exists only for the purpose of 
 }
 
 
+@subsection[#:tag "type_"]{Negative Types}
+
+A @deftech{negative type} in Fexpress essentially acts like an optimization hint for compiling an expression of that type.
+
+@defproc[(type_? [v any/c]) boolean?]{
+  Returns whether the given value is a @tech{negative type}.
+}
+
+@defthing[gen:type_ any/c]{
+  A generic interface for @tech{negative types}. This interface doesn't have any methods. (It's not that it couldn't have methods, but we don't seem to need any for this proof of concept.)
+  
+  In order to perform compilation, Fexpress @tech{fexprs} sometimes need to know the structural details of the negative type they're expected to create a value in. Thus, when defining new negative types, it's typical to define a structure type that does more than just implement the @racket[gen:type_] interface. For instance, it can also provide its predicate and field accessors as part of its intended API, or it can implement other interfaces on the side.
+}
+
+
+@subsubsection[#:tag "essential-negative-types"]{
+  Essential Negative Types
+}
+
+@defstruct*[any-value/t_ ()]{
+  A @tech{negative type} which provides no hints as to what its potential values should be like.
+}
+
+@defstruct*[
+  ->/t_
+  ([arg-type+-list (listof type+?)] [return/t_ type_?])
+]{
+  A @tech{negative type} for functions that have the specified list of @tech{positive types} for their arguments and the single specified negative type for their results.
+  
+  If we unpack the meaning of positive and negative types in Fexpress, this is a compilation hint for expressions that return functions. It offers the given symbolic values as approximations for the function arguments, and it offers further hints for compiling the function body.
+}
+
+
 @subsection[#:tag "evaluating-and-compiling"]{Evaluating and Compiling}
 
 @defproc[

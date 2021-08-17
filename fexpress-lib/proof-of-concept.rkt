@@ -42,8 +42,6 @@
     [free-vars? (-> any/c boolean?)])
 
   ; Generic interfaces to serve as extension points
-  ; TODO DOCS: Document the negative type interface in its respective
-  ; section.
   gen:fexpr
   (contract-out
     [fexpr? (-> any/c boolean?)]
@@ -104,7 +102,6 @@
     [specific-value/t+ (-> any/c type+?)])
 
   ; Negative types
-  ; TODO DOCS: Document these.
   (struct-out any-value/t_)
   (struct-out ->/t_)
 
@@ -571,15 +568,15 @@
   #:methods gen:type_
   [])
 
-; Creates a negative type for functions, given a list of positive
-; types for the arguments and a single negative type for the result.
+; A negative type for functions that have the specified list of
+; positive types for their arguments and the single specified negative
+; type for their results.
 ;
 ; If we unpack the meaning of positive and negative types in Fexpress,
-; this is a compilation hint for expressions that return functions.
-; It supposes the given symbolic values for the arguments, and it
-; gives the given compilation hint for the function's result. For a
-; lambda form, the hint can be used for compiling the body, as
-; `fexpress-clambda` demonstrates.
+; this is a compilation hint for expressions that return functions. It
+; offers the given symbolic values as approximations for the function
+; arguments, and it offers further hints for compiling the function
+; body.
 ;
 ; Field contracts:
 ; (listof type+?) type_?
