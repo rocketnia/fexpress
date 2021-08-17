@@ -22,7 +22,8 @@
 @(require
    (for-label
      (only-in racket/base
-       + * apply boolean? define hash lambda list symbol?)))
+       + * apply boolean? define exact-integer? hash lambda list
+       symbol?)))
 @(require
    (for-label (only-in racket/contract/base any/c hash/c listof)))
 
@@ -164,17 +165,71 @@ The building blocks provided here make the language capable of doing simple lamb
     (define _my-compose
       (fexpress-eval _test-env
         `(the ,(->/t_ (list (non-fexpr-value/t+))
-                (->/t_ (list (non-fexpr-value/t+))
-                  (any-value/t_)))
-          (clambda (f)
-            (clambda (g)
-              (clambda (x)
-                (f (g x))))))))
+                 (->/t_ (list (non-fexpr-value/t+))
+                   (any-value/t_)))
+           (clambda (f)
+             (clambda (g)
+               (clambda (x)
+                 (f (g x))))))))
     
     (((_my-compose (lambda (_x) (+ 2 _x))) (lambda (_x) (+ 3 _x))) 1)
   ]
   
   (TODO: Demonstrate that the above example is able to compile without being inhibited by dynamic fexpr features.)
+}
+
+
+@subsection[#:tag "evaluating-and-compiling"]{Evaluating and Compiling}
+
+@defproc[
+  (fexpress-eval/t+ [env env?] [cont continuation-expr?] [expr any/c])
+  type+?
+]{
+  Reduces the given Fexpress expression and @tech{continuation expression} in the given @racket[env?] to a @tech{positive type}. The resulting positive type can be transformed into an evaluated result using @racket[type+-eval] or a compiled result using @racket[type+-compile].
+}
+
+@defproc[(literal? [v any/c]) boolean?]{
+  Returns whether the given value can be used as a datum literal in the Fexpress proof of concept. For this simple demonstration, we just support @racket[exact-integer?] values.
+}
+
+@defproc[
+  (unknown-non-fexpr-apply/t+ [env env?]
+                              [cont continuation-expr?]
+                              [val-to-eval/t+ type+?]
+                              [val-to-compile/t+ type+?]
+                              [args any/c])
+  type+?
+]{
+  Given unevaluated arguments, performs a Racket-like procedure call behavor, which first evaluates the arguments. This is a fallback for when a value that's called like an fexpr turns out to be a general Racket value rather than an Fexpress @racket[fexpr?].
+  
+  The @racket[val-to-eval/t+] type will only be used for its @racket[type+-eval] behavior. The @racket[val-to-compile/t+] type will only be used for its @racket[type+-compile] behavior. These can be the same type.
+  
+  In typical code, the @racket[args] to an fexpr call are usually a proper list. This operation raises an error if they're not.
+}
+
+@defproc[
+  (specific-value-continue-eval/t+ [env env?]
+                                   [cont continuation-expr?]
+                                   [val/t+ type+?]
+                                   [val any/c])
+  type+?
+]{
+  (Calls fexprs.) Returns a @tech{positive type} for the potential values which result from transforming the given singleton positive type and its given value according to the series of steps and the target negative type listed in the given @tech{continuation expression}.
+  
+  There are many @tt{...-continue-eval/t+} operations in Fexpress, and this is the one to call when the actual @emph{value} of the original type is known and can potentially be an fexpr with its own idea of how to proceed. A positive type processing a @racket[type+-continue-eval/t+] call usually dispatches to this itself when the type's value is known at compile time, and a continuation expression processing a @racket[continuation-expr-continue-eval/t+] call usually dispatches to this itself once the value is finally known at run time.
+  
+  The given @racket[val/t+] type should be a type which evaluates to the value @racket[val].
+}
+
+@defproc[
+  (non-fexpr-continue-eval/t+ [env env?]
+                              [cont continuation-expr?]
+                              [val/t+ type+?])
+  type+?
+]{
+  (Calls fexprs.) Assuming the given @tech{positive type} and its values have no custom fexpr-calling behavior, returns a positive type for the potential values which result from transforming the given one according to the series of steps and the target negative type listed in the given @tech{continuation expression}.
+  
+  There are many @tt{...-continue-eval/t+} operations in Fexpress, and this is the one to call when the positive type @emph{and} its values should have their custom fexpr-calling behavior ignored. Fexpress doesn't usually ignore values' fexpr-calling behavior like this, but since this can lead to better performance, it can be explicitly requested by using @racket[(fexpress-the _...)] to ascribe a type that uses @racket[non-fexpr-value/t+].
 }
 
 
@@ -185,14 +240,9 @@ The building blocks provided here make the language capable of doing simple lamb
 }
 
 @defproc[(env? [v any/c]) boolean?]{
-  Returns whether the given value is an Fexpress lexical environment, which is represented by an immutable hash from variable names to positive types. Besides being positive types, the values of the hash should also have successful @racket[type+-compile] behavior, and they should be equivalent to @racket[var-compile] for the same Fexpress variable.
+  Returns whether the given value is an Fexpress lexical environment, which is represented by an immutable hash from variable names to @tech{positive types}. Besides being positive types, the values of the hash should also have successful @racket[type+-compile] behavior, and they should be equivalent to @racket[var-compile] for the same Fexpress variable.
 }
 
 @defproc[(free-vars? [v any/c]) boolean?]{
   Returns whether the given value is an Fexpress free variable set, which is represented by an immutable hash from variable names to @racket[#t].
 }
-
-
-@subsection[#:tag "todo"]{TODO}
-
-(TODO: Define the terms @deftech{positive type} and @deftech{negative type}.)
