@@ -110,8 +110,20 @@ The building blocks provided here make the language capable of doing simple lamb
 
 @subsection[#:tag "fexpr"]{Fexprs}
 
+An @deftech{fexpr} is a kind of abstraction that's existed since the earliest implementations of Lisp, and it's something in between a function and a macro. Like a function, it's a first-class value that can do its work at run time. Like a macro, it receives its arguments unevaluated, and---at least in the better incarnations---it also receives some kind of access to its caller's local scope with which to understand these arguments' intended semantics.
+
+This combination lets programmers express a few things that they can't express with functions and macros, since fexprs can express decisions that depend on a combination of run-time information and source code information.
+
+However, this combination generally means programs can't be compiled effectively, because certain expressions need to be preserved as-is until run time.
+
+The Fexpress proof of concept shows how to get around this limitation by giving fexprs even more information to work with. These fexprs receive a @tech{continuation expression} which contains a @tech{negative type} where they can find optimization hints to apply in their behavior.
+
+There are also @tech{positive type} values, which are types that can carry assumptions about the fexpr-calling behavior of their potential values (and hence act a little like fexprs in their own way). Positive types are the tool the fexpr evaluator needs to proceed into binding forms like @racket[fexpress-clambda] and implement some of their behavior early, before the actual values of the variables are known.
+
+(TODO: How new are the things we're demonstrating here? Fexprs have been in active use in the newLISP, Picolisp, and (arguably) R communities. There's been a lot of research on compiling reflective languages, as seen in "Collapsing Towers of Interpreters." There's also a potential connection to JIT in general, and possibly to the compilation of algebraic effect systems.)
+
 @defproc[(fexpr? [v any/c]) boolean?]{
-  Returns whether the given value is an Fexpress fexpr.
+  Returns whether the given value is an Fexpress @tech{fexpr}.
 }
 
 @defthing[gen:fexpr any/c]{
@@ -125,7 +137,7 @@ The building blocks provided here make the language capable of doing simple lamb
                           [val fexpr?])
   type+?
 ]{
-  (Calls fexprs, namely the given one.) Returns a @tech{positive type} for the potential values which result from transforming the given singleton positive type and its given value (an fexpr) according to the series of steps and the target @tech{negative type} listed in the given @tech{continuation expression}.
+  (Calls fexprs, namely the given one.) Returns a @tech{positive type} for the potential values which result from transforming the given positive type and the given value (an @racket[fexpr?]) of that type according to the series of steps and the target @tech{negative type} listed in the given @tech{continuation expression}.
   
   There are many @tt{...-continue-eval/t+} operations in Fexpress, and this is the one to call when the actual @emph{value} of the original type is known and is definitely an fexpr. The fexpr can implement its own operation-specific behavior here, or it can dispatch again to @racket[continuation-expr-continue-eval/t+] to handle a continuation expression it doesn't know how to interpret itself.
   
@@ -219,12 +231,12 @@ The building blocks provided here make the language capable of doing simple lamb
 
 @subsection[#:tag "continuation-expr"]{Continuation Expressions}
 
+An Fexpress @deftech{continuation expression} is a representation of the syntax around the evaluating part of an Fexpress expression.
+
+Usually, this is a series of pending fexpr applications (@racket[apply/ce]) to perform in the current @racket[env?], followed by an ascribed @tech{negative type} to optimize the overall result by (@racket[done/ce]). Other kinds of copatterns or spine elements, like field or method accessor syntaxes, could fit in here as well.
+
 @defproc[(continuation-expr? [v any/c]) boolean?]{
-  Returns whether the given value is a continuation expression.
-  
-  An Fexpress @deftech{continuation expression} is a representation of the syntax around the evaluating part of an Fexpress expression.
-  
-  Usually, this is a series of pending fexpr applications (@racket[apply/ce]) to perform in the current @racket[env?], followed by an ascribed @tech{negative type} to optimize the overall result by (@racket[done/ce]). Other kinds of copatterns or spine elements, like field or method accessor syntaxes, could fit in here as well.
+  Returns whether the given value is a @tech{continuation expression}.
 }
 
 @defthing[gen:continuation-expr any/c]{
@@ -245,19 +257,97 @@ The building blocks provided here make the language capable of doing simple lamb
 }
 
 
-@subsubsection[#:tag "done/ce"]{A Continuation Expression for Being Done}
+@subsubsection[#:tag "essential-continuation-exprs"]{
+  Essential Continuation Expressions
+}
 
 @defstruct*[done/ce ([type_ type_?])]{
   A @tech{continuation expression} that represents that there's nothing left to do except return a value. The specified @tech{negative type} can serve as a hint for optimizing the value.
 }
 
-
-@subsubsection[#:tag "apply/ce"]{A Continuation Expression for Fexpr Application}
-
 @defstruct*[apply/ce ([args any/c] [next continuation-expr?])]{
   A @tech{continuation expression} that represents that the next thing to do to the value is to invoke it as an fexpr with certain arguments.
   
   In typical code, the @racket[_args] to an fexpr call are usually a proper list.
+}
+
+
+@subsection[#:tag "type+"]{Positive Types}
+
+A @deftech{positive type} in Fexpress essentially acts like a symbolic value. Like other type systems, this kind of type designates a set of potential values. Depending on what assumptions it carries, it can produce a value (@racket[type+-eval]) and/or a @racket[compilation-result?] that evaluates to a value (@racket[type+-compile]).
+
+The type system in the Fexpress proof of concept exists only for the purpose of optimization, and it has only the bells and whistles that serve that purpose. In particular, this type system makes no attempt to be sound. A variable associated with a positive type can turn out to have a value that defies that type's assumptions or has been computed in a different way than the type would have computed it.
+
+@defproc[(type+? [v any/c]) boolean?]{
+  Returns whether the given value is a @tech{positive type}.
+}
+
+@defthing[gen:type+ any/c]{
+  A generic interface for @tech{positive types}, which must implement the following methods:
+  
+  @itemlist[
+    @item{@racket[type+-eval]}
+    @item{@racket[type+-compile]}
+    @item{@racket[at-variable/t+]}
+    @item{@racket[type+-continue-eval/t+]}
+  ]
+  
+  The implementations of these methods should satisfy certain algebraic laws:
+  
+  If both @racket[type+-eval] and @racket[type+-compile] both successfully produce results and don't perform any side effects along the way, the evaluation result should be the same as running the compilation result with @racket[compilation-result-eval] in any @racket[env?] where the bindings for its free variables have their own successful and pure @racket[type+-eval] and @racket[type+-compile] behaviors.
+  
+  The @racket[at-variable/t+] method should observe the lens laws with respect to @racket[type+-compile]: The result of getting a compilation result with @racket[type+-compile] after it's been replaced with @racket[at-variable/t+] should be the same as just calling @racket[var-compile] on the variable that was passed to the replacer. The result of replacing a compilation result with itself should be the same as not using @racket[at-variable/t+] at all. The result of replacing a compilation result and replacing it a second time should be the same as just skipping to the second replacement.
+}
+
+@defproc[(type+-eval [type+ type+?]) any/c]{
+  Attempt to compute a value of the given @tech{positive type}.
+}
+
+@defproc[(type+-compile [type+ type+?]) compilation-result?]{
+  Attempt to produce a @racket[compilation-result?] that evaluates to values of the given @tech{positive type} in the @racket[env?] the type belongs to.
+}
+
+@defproc[(at-variable/t+ [var var?] [type+ type+?]) type+?]{
+  Replaces the given @tech{positive type}'s compilation result so that it refers to the given Fexpress variable. The variable's potential bindings must be among the type's potential values, but nothing is done to verify this.
+  
+  Any type that's added to an @racket[env?] should be transformed this way, since it's now in scope under a dedicated name.
+}
+
+@defproc[
+  (type+-continue-eval/t+ [env env?]
+                          [cont continuation-expr?]
+                          [type+ type+?])
+  type+?
+]{
+  (Calls fexprs.) Returns a @tech{positive type} for the potential values which result from transforming the given @tech{positive type} according to a series of steps and a target @tech{negative type} listed in the given continuation expression.
+  
+  There are many @tt{...-continue-eval/t+} operations in Fexpress, and this is the most general one; it dispatches to the others.
+}
+
+@defproc[
+  (lazy-value/t+ [eval (-> any/c)] [compile (-> compilation-result?)])
+  type+?
+]{
+  Returns a @tech{positive type} with the given implementations of @racket[type+-eval] and @racket[type+-compile]. These should satisfy the algebraic laws described at @racket[gen:type+].
+  
+  The resulting type doesn't carry any assumptions about the potential values' fexpr-calling behavior. That is to say, its @racket[type+-continue-eval/t+] behavior only gives up and dispatches to @racket[continuation-expr-continue-eval/t+].
+}
+
+
+@subsubsection[#:tag "essential-positive-types"]{
+  Essential Positive Types
+}
+
+@defproc[(any-value/t+) type+?]{
+  Returns a @tech{positive type} which carries no assumptions about its potential values.
+}
+
+@defproc[(non-fexpr-value/t+) type+?]{
+  Returns a @tech{positive type} which carries an assumption that its potential values will not be @racket[fexpr?] values. This isn't necessarily a sound assumption, but certain operations will use this information to allow compilation to proceed even if a value of this type is invoked like an fexpr.
+}
+
+@defproc[(specific-value/t+ [value any/c]) type+?]{
+  Returns a @tech{positive type} which carries an assumption that its potential values will all be the given value. It can also @racket[type+-eval] to that value.
 }
 
 
@@ -296,9 +386,9 @@ The building blocks provided here make the language capable of doing simple lamb
                                    [val any/c])
   type+?
 ]{
-  (Calls fexprs.) Returns a @tech{positive type} for the potential values which result from transforming the given singleton positive type and its given value according to the series of steps and the target @tech{negative type} listed in the given @tech{continuation expression}.
+  (Calls fexprs.) Returns a @tech{positive type} for the potential values which result from transforming the given positive type and the given value of that type according to the series of steps and the target @tech{negative type} listed in the given @tech{continuation expression}.
   
-  There are many @tt{...-continue-eval/t+} operations in Fexpress, and this is the one to call when the actual @emph{value} of the original type is known and can potentially be an fexpr with its own idea of how to proceed. A positive type processing a @racket[type+-continue-eval/t+] call usually dispatches to this itself when the type's value is known at compile time, and a continuation expression processing a @racket[continuation-expr-continue-eval/t+] call usually dispatches to this itself once the value is finally known at run time.
+  There are many @tt{...-continue-eval/t+} operations in Fexpress, and this is the one to call when the actual @emph{value} being called is known and can potentially be an fexpr with its own idea of how to proceed. A positive type processing a @racket[type+-continue-eval/t+] call usually dispatches to this itself when the type's value is known at compile time, and a continuation expression processing a @racket[continuation-expr-continue-eval/t+] call usually dispatches to this itself once the value is finally known at run time.
   
   The given @racket[val/t+] type should be a type which evaluates to the value @racket[val].
 }

@@ -42,7 +42,8 @@
     [free-vars? (-> any/c boolean?)])
 
   ; Generic interfaces to serve as extension points
-  ; TODO DOCS: Document the types in their respective sections.
+  ; TODO DOCS: Document the negative type interface in its respective
+  ; section.
   gen:fexpr
   (contract-out
     [fexpr? (-> any/c boolean?)]
@@ -89,12 +90,11 @@
 
   ; Positive types
   ;
-  ; TODO DOCS: Document these.
-  ;
   ; NOTE: Instead of exporting all of these as structs, we export just
   ; some of them, and we export only the constructors. This seems to
   ; be sufficient; nothing we've built so far needs to know the
   ; identity of a positive type, just invoke its own methods.
+  ;
 ;  (struct-out lazy-value/t+)
 ;  (struct-out any-variable-bound-value/t+)
 ;  (struct-out any-value/t+)
@@ -189,9 +189,9 @@
 (define-generics fexpr
 
   ; (Calls fexprs, namely this one.) Returns a positive type for the
-  ; potential values which result from transforming the given
-  ; singleton positive type and its given value (this value) according
-  ; to the series of steps and the target negative type listed in the
+  ; potential values which result from transforming the given positive
+  ; type and the given value (this fexpr) of that type according to
+  ; the series of steps and the target negative type listed in the
   ; given continuation expression.
   ;
   ; There are many `...-continue-eval/t+` operations in Fexpress, and
@@ -262,17 +262,15 @@
 ; types and more like symbolic values.
 (define-generics type+
 
-  ; Assuming the type is a singleton type of a known value, get that
-  ; value.
+  ; Attempts to compute a value of the type.
   ;
   ; Contract:
   ; (-> type+? any/c)
   ;
   (type+-eval type+)
 
-  ; Assuming the type is a type of potential values that are known to
-  ; have a certain compiled form in the environment the type belongs
-  ; to, gets that compiled form.
+  ; Attempts to produce a compilation result that evaluates to values
+  ; of the given type in the environment the type belongs to.
   ;
   ; Contract:
   ; (-> type+? compilation-result?)
@@ -280,9 +278,12 @@
   (type+-compile type+)
 
   ; Replaces the type's compilation result so that it refers to the
-  ; given Fexpress variable. This should be done to any type that's
-  ; added to the environment, since it's now in scope under a
-  ; dedicated name.
+  ; given Fexpress variable. The variable's potential bindings must be
+  ; among the type's potential values, but nothing is done to verify
+  ; this.
+  ;
+  ; Any type that's added to an environment should be transformed this
+  ; way, since it's now in scope under a dedicated name.
   ;
   ; Contract:
   ; (-> var? type+? type+?)
@@ -291,7 +292,7 @@
 
   ; (Calls fexprs.) Returns a positive type for the potential values
   ; which result from transforming this type according to a series of
-  ; steps and a target type listed in the given continuation
+  ; steps and a target negative type listed in the given continuation
   ; expression.
   ;
   ; There are many `...-continue-eval/t+` operations in Fexpress, and
@@ -751,13 +752,13 @@
                    arg-compilation-results)]))))))
 
 ; (Calls fexprs.) Returns a positive type for the potential values
-; which result from transforming the given singleton positive type and
-; its given value according to the series of steps and the target
+; which result from transforming the given positive type and the given
+; value of that type according to the series of steps and the target
 ; negative type listed in the given continuation expression.
 ;
 ; There are many `...-continue-eval/t+` operations in Fexpress, and
-; this is the one to call when the actual *value* of the original type
-; is known and can potentially be an fexpr with its own idea of how to
+; this is the one to call when the actual *value* being called is
+; known and can potentially be an fexpr with its own idea of how to
 ; proceed. A positive type processing a `type+-continue-eval/t+` call
 ; usually dispatches to this itself when the type's value is known at
 ; compile time, and a continuation expression processing a
