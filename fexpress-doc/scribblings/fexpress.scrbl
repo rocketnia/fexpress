@@ -19,7 +19,12 @@
 @;   language governing permissions and limitations under the License.
 
 
-@(require (for-label (only-in racket/contract/base any/c)))
+@(require
+   (for-label
+     (only-in racket/base
+       + * apply boolean? define hash lambda list symbol?)))
+@(require
+   (for-label (only-in racket/contract/base any/c hash/c listof)))
 
 @(require (for-label fexpress/proof-of-concept))
 
@@ -31,11 +36,13 @@
 
 @title{Fexpress}
 
-Fexpress is a compilation-friendly fexpr language. As far as feasible, it macroexpands expressions ahead of time instead of just interpreting everything. Currently, the macroexpandable part includes a subset with the operations of lambda calculus (variable references, application, and lambda abstraction).
+Fexpress is a compilation-friendly fexpr language. As far as feasible, it macroexpands expressions ahead of time instead of just interpreting everything.
 
-TODO: Currently, there isn't actually a way to write fexprs, at least not in the public API.
+At some point, there may be two variants of Fexpress: a minimalistic and unstable version for ease of understanding the internals, and a more full-featured version for convenient integration of fexprs with Racket programming. For now, only the first exists.
 
-TODO: Currently, the public API is completely unstable... and not very powerful.
+(TODO: Finish documenting it.)
+
+(TODO: Currently, there isn't actually an operation for writing simple fexprs. Fexpress users can build one, but let's have one that's built in.)
 
 
 
@@ -43,36 +50,149 @@ TODO: Currently, the public API is completely unstable... and not very powerful.
 
 
 
-@section[#:tag "proof-of-concept"]{Proof of concept}
+@section[#:tag "proof-of-concept"]{The Fexpress Proof of Concept}
 
 @defmodule[fexpress/proof-of-concept]
 
-This module provides a single entrypoint into a minimalistic, experimental Fexpress language. At this point, it can basically only do simple lambda calculus, with more or less efficiency.
+This module provides an open-faced implementation of a minimalistic, experimental Fexpress language. Not all the contracts are completely enforced, nor are they stable.
 
-TODO: Let it express more things.
+The building blocks provided here make the language capable of doing simple lambda calculus, with more or less efficiency. It can be extended by writing more @racket[fexpr?] values.
 
 
-@defproc[(fexpress-eval-in-base-env [v any/c]) any/c]{
-  Given an s-expression, return the result of evaluating it as an Fexpress program.
+@subsection[#:tag "entrypoint"]{Entrypoint}
+
+@defproc[(fexpress-eval [env env?] [expr any/c]) any/c]{
+  Given an s-expression representing Fexpress code, return the result of evaluating it in the given @racket[env?].
   
   
   @examples[
     #:eval (example-eval)
     
-    (fexpress-eval-in-base-env
+    (define _test-env
+      (env-of-specific-values
+        (hash 'the fexpress-the
+              'ilambda fexpress-ilambda
+              'clambda fexpress-clambda
+              'funcall (lambda (_f . _args) (apply _f _args))
+              '+ +
+              '* *)))
+    
+    (fexpress-eval _test-env
       '(+ 1 2))
-    (fexpress-eval-in-base-env
+    (fexpress-eval _test-env
       '((ilambda (x y) (+ x y 3)) 1 2))
-    (fexpress-eval-in-base-env
+    (fexpress-eval _test-env
       '((clambda (x y) (+ x y 3)) 1 2))
-    (fexpress-eval-in-base-env
-      '(app
+    (fexpress-eval _test-env
+      '(funcall
          (clambda (square)
-           (app
+           (funcall
              (clambda (double)
-               (app double
-                 (app double (+ (app square 3) (app square 4)))))
+               (funcall double
+                 (funcall double
+                   (+ (funcall square 3) (funcall square 4)))))
              (clambda (x) (+ x x))))
          (clambda (x) (* x x))))
   ]
 }
+
+@defproc[
+  (env-of-specific-values [specific-values (hash/c var? any/c)])
+  env?
+]{
+  Creates an @racket[env?] from a hash that maps Fexpress variables to values.
+  
+  An @racket[env?] maps Fexpress variables to @tech{positive types} that compile to references to the same variables, so this wraps up the values in @racket[specific-value/t+] and sets up their compilation behavior with @racket[at-variable/t+].
+}
+
+
+@subsection[#:tag "fexprs-for-lambda"]{Fexprs for Lambda Operations}
+
+@defform[#:kind "fexpr" (fexpress-ilambda (arg-id ...) body-expr)]{
+  An Fexpress @racket[fexpr?] implementing an interpreted @racket[lambda] operation. This doesn't attempt to compile the body. The resulting function evaluates the body dynamically every time it's called.
+
+  When calling this fexpr, the subforms should be parseable according to @racket[parse-lambda-args].
+}
+
+@defform[#:kind "fexpr" (fexpress-clambda (arg-id ...) body-expr)]{
+  An Fexpress @racket[fexpr?] implementing a compiled @racket[lambda] operation. This attempts to compile the body. The resulting function is likely to be as fast as the equivalent Racket code unless it uses Fexpress features that inhibit compilation, in which case it falls back to interpreting the relevant Fexpress code.
+
+  When calling this fexpr, the subforms should be parseable according to @racket[parse-lambda-args].
+}
+
+@defproc[
+  (parse-lambda-args [err-name symbol?] [args any/c])
+  parsed-lambda-args?
+]{
+  Asserts that the given subforms are in the format expected for an @racket[fexpress-ilambda] or @racket[fexpress-clambda] form -- namely, a list of two elements, the first of which is a list of mutually unique variables and the second of which, the body, is any value. (The body is usually an s-expression representing an Fexpress expression.) If the subforms do fit this format, returns a @racket[parsed-lambda-args] struct carrying the number of arguments, the argument variable names, and the body. If they don't, an error attributed to the operation name given by `err-name` will be raised.
+}
+
+@defstruct*[
+  parsed-lambda-args
+  ([n natural?] [arg-vars (listof var?)] [body any/c])
+]{
+  A return value of @racket[parse-lambda-args].
+  
+  The number @racket[_n] should be the length of @racket[_arg-vars].
+  
+  The @racket[_arg-vars] should be mutually unique.
+
+  The @racket[_body] should be an s-expression representing an Fexpress expression.
+}
+
+
+@subsection[#:tag "an-fexpr-for-type-ascription"]{
+  An Fexpr for Type Ascription
+}
+
+@defform[#:kind "fexpr" (fexpress-the val/t_ val-expr)]{
+  An Fexpress @racket[fexpr?] implementing a type ascription operation. The subform @racket[val/t_] must be a @tech{negative type} syntactically, not just an expression that evaluates to one. The subform @racket[val-expr] is an expression the type applies to. The purpose of @tt{fexpress-the} is mainly to allow function bodies to use Lisp-1-style function application on local variables without inhibiting compilation.
+  
+  
+  @examples[
+    #:eval (example-eval)
+    
+    (define _test-env
+      (env-of-specific-values
+        (hash 'the fexpress-the
+              'ilambda fexpress-ilambda
+              'clambda fexpress-clambda
+              'funcall (lambda (_f . _args) (apply _f _args))
+              '+ +
+              '* *)))
+    
+    (define _my-compose
+      (fexpress-eval _test-env
+        `(the ,(->/t_ (list (non-fexpr-value/t+))
+                (->/t_ (list (non-fexpr-value/t+))
+                  (any-value/t_)))
+          (clambda (f)
+            (clambda (g)
+              (clambda (x)
+                (f (g x))))))))
+    
+    (((_my-compose (lambda (_x) (+ 2 _x))) (lambda (_x) (+ 3 _x))) 1)
+  ]
+  
+  (TODO: Demonstrate that the above example is able to compile without being inhibited by dynamic fexpr features.)
+}
+
+
+@subsection[#:tag "contracts"]{Contracts}
+
+@defproc[(var? [v any/c]) boolean?]{
+  Returns whether the given value is an Fexpress variable name, which is represented by an interned symbol.
+}
+
+@defproc[(env? [v any/c]) boolean?]{
+  Returns whether the given value is an Fexpress lexical environment, which is represented by an immutable hash from variable names to positive types. Besides being positive types, the values of the hash should also have successful @racket[type+-compile] behavior, and they should be equivalent to @racket[var-compile] for the same Fexpress variable.
+}
+
+@defproc[(free-vars? [v any/c]) boolean?]{
+  Returns whether the given value is an Fexpress free variable set, which is represented by an immutable hash from variable names to @racket[#t].
+}
+
+
+@subsection[#:tag "todo"]{TODO}
+
+(TODO: Define the terms @deftech{positive type} and @deftech{negative type}.)

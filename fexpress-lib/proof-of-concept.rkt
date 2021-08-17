@@ -20,7 +20,8 @@
 ;   language governing permissions and limitations under the License.
 
 
-(require (only-in racket/contract/base -> any/c contract-out listof))
+(require
+  (only-in racket/contract/base -> any/c contract-out hash/c listof))
 (require (only-in racket/function const))
 (require (only-in racket/generic define-generics))
 (require (only-in racket/hash hash-union))
@@ -33,42 +34,143 @@
 
 
 (provide
-  (contract-out
-    [fexpress-eval-in-base-env (-> any/c any/c)]
 
-    ; TODO: Document these other exports.
+  ; Contracts
+  (contract-out
+    [var? (-> any/c boolean?)]
+    [env? (-> any/c boolean?)]
+    [free-vars? (-> any/c boolean?)])
+
+  ; Generic interfaces to serve as extension points
+  ; TODO DOCS: Document these.
+  gen:fexpr
+  (contract-out
+    [fexpr? (-> any/c boolean?)]
+    [fexpr-continue-eval/t+
+     (-> env? continuation-expr? type+? fexpr? type+?)])
+  (struct-out makeshift-fexpr)
+  gen:continuation-expr
+  (contract-out
+    [continuation-expr? (-> any/c boolean?)]
+    [continuation-expr-continue-eval/t+
+     (-> env? continuation-expr? type+? type+?)])
+  gen:type+
+  (contract-out
     [type+? (-> any/c boolean?)]
-    [type_? (-> any/c boolean?)]
+    [type+-eval (-> type+? any/c)]
+    [type+-compile (-> type+? compilation-result?)]
+    [at-variable/t+ (-> var? type+? type+?)]
+    [type+-continue-eval/t+
+     (-> env? continuation-expr? type+? type+?)])
+  gen:type_
+  (contract-out
+    [type_? (-> any/c boolean?)])
+
+  ; Utilities for compiling to Racket
+  ; TODO DOCS: Document these.
+  (contract-out
+    [env-get/t+ (-> env? var? type+?)]
+    [var-representation-in-racket (-> var? symbol?)])
+  (struct-out compilation-result)
+  (contract-out
+    [var-compile (-> var? compilation-result?)]
+    [compilation-result-eval (-> env? compilation-result? any/c)])
+
+  ; Negative types
+  ; TODO DOCS: Document these.
+  (struct-out any-value/t_)
+  (struct-out ->/t_)
+
+  ; Positive types
+  ;
+  ; TODO DOCS: Document these.
+  ;
+  ; NOTE: Instead of exporting all of these as structs, we export just
+  ; some of them, and we export only the constructors. This seems to
+  ; be sufficient; nothing we've built so far needs to know the
+  ; identity of a positive type, just invoke its own methods.
+;  (struct-out lazy-value/t+)
+;  (struct-out any-variable-bound-value/t+)
+;  (struct-out any-value/t+)
+;  (struct-out variable-bound-non-fexpr-value/t+)
+;  (struct-out non-fexpr-value/t+)
+;  (struct-out specific-variable-bound-value/t+)
+;  (struct-out specific-value/t+)
+  (contract-out
+    [lazy-value/t+ (-> (-> any/c) (-> compilation-result?) type+?)]
     [any-value/t+ (-> type+?)]
-    [any-value/t_ (-> type_?)]
     [non-fexpr-value/t+ (-> type+?)]
-    [->/t_ (-> (listof type+?) type_? type_?)]))
+    [specific-value/t+ (-> any/c type+?)])
+
+  ; Continuation expressions
+  ; TODO DOCS: Document these.
+  (struct-out done/ce)
+  (struct-out apply/ce)
+
+  ; The Fexpress combination evaluator-compiler
+  ; TODO DOCS: Document these.
+  (contract-out
+    [literal? (-> any/c boolean?)]
+    [fexpress-eval/t+ (-> env? continuation-expr? any/c type+?)]
+    [unknown-non-fexpr-apply/t+
+     (-> env? continuation-expr? type+? type+? any/c type+?)]
+    [specific-value-continue-eval/t+
+     (-> env? continuation-expr? type+? any/c type+?)]
+    [non-fexpr-continue-eval/t+
+     (-> env? continuation-expr? type+? type+?)])
+
+  ; Fexprs for lambda operations
+  (struct-out parsed-lambda-args)
+  (contract-out
+    [parse-lambda-args (-> symbol? any/c parsed-lambda-args?)]
+    [fexpress-ilambda fexpr?]
+
+    ; NOTE: We treat this as internal.
+    #;
+    [compile-clambda
+     (-> env? continuation-expr? any/c compilation-result?)]
+
+    [fexpress-clambda fexpr?])
+
+  ; An fexpr for type ascription
+  (contract-out
+    [fexpress-the fexpr?])
+
+  ; The Fexpress entrypoint
+  (contract-out
+    [env-of-specific-values (-> (hash/c var? any/c) env?)]
+    [fexpress-eval (-> env? any/c any/c)])
+
+  )
 
 
 (define-namespace-anchor here)
 
 
 
-; ===== Documentation-only contracts =================================
+; ===== Contracts ====================================================
 
 ; A contract that recognizes this language's variable names, which are
 ; represented by interned symbols.
-#;
-(define var? (and symbol? symbol-interned?))
+(define (var? v)
+  (and (symbol? v) (symbol-interned? v)))
 
 ; A contract that recognizes this language's lexical environments,
 ; which are represented by immutable hashes from variable names to
 ; positive types. Besides being positive types, the values of the hash
-; should also have successful `type+-compile` behavior, and the
-; resulting Racket expression should be a reference to the
-; `format-local-symbol` version of the same symbol.
-#;
-(define env? (hash/c var? type+? #:immutable #t #:flat? #t))
+; should also have successful `type+-compile` behavior, and it should
+; be equivalent to `var-compile` for the same Fexpress variable.
+(define (env? v)
+  (and (hash? v) (immutable? v)
+    (for/and ([(k v) (in-hash v)])
+      (and (var? k) (type+? v)))))
 
 ; A contract that recognizes Fexpress free variable sets, which are
 ; represented by immutable hashes from variable names to `#t`.
-#;
-(define free-vars? (hash/c var? #t #:immutable #t #:flat? #t))
+(define (free-vars? v)
+  (and (hash? v) (immutable? v)
+    (for/and ([(k v) (in-hash v)])
+      (and (var? k) (equal? #t v)))))
 
 
 
@@ -114,7 +216,10 @@
   #:methods gen:fexpr
   [(define (fexpr-continue-eval/t+ env cont op/t+ op)
      (match-define (makeshift-fexpr continue-eval/t+) op)
-     (continue-eval/t+ env cont op/t+))])
+     (continue-eval/t+ env cont op/t+))]
+  #:property prop:procedure
+  (lambda (fexpr . args)
+    (error "attempted to call an Fexpress fexpr from Racket code, which is not supported")))
 
 ; A continuation expression. This represents the spine of pending
 ; fexpr applications (`apply/ce`) to perform in the current
@@ -196,34 +301,36 @@
 
 ; ===== Utilities for compiling to Racket ============================
 
-; Converts an Fexpress variable name into the Racket variable name
-; that the Fexpress internals compile it into.
+; Contract:
+; (-> env? var? type+?)
+(define (env-get/t+ env var)
+  (hash-ref env var
+    (lambda ()
+      (raise-arguments-error 'env-get/t+
+        "Unbound variable"
+        "var" var
+        "env" env))))
+
+; Converts an Fexpress variable name into the symbol it should be
+; represented as in compiled Racket code for `compilation-result?`
+; values. Currently, it's the same symbol but with "-" prepended to
+; it.
 ;
 ; Contract:
 ; (-> var? symbol?)
 ;
-(define (format-local-symbol sym)
+(define (var-representation-in-racket sym)
   (format-symbol "-~a" sym))
-
-; Contract:
-; (-> env? var? type+?)
-(define (environment-get/t+ env var)
-  (hash-ref env var
-    (lambda ()
-      (raise-arguments-error 'environment-get/t+
-        "Unbound variable"
-        "var" var
-        "env" env))))
 
 ; Field contracts:
 ; boolean? free-vars? any/c
 ;
 ; The `expr` should be an s-expression of Racket code. It may have
-; free variables corresponding to the `format-local-symbol` versions
-; of what the Fexpress free variables would be. It may also have the
-; free variable `env` if `depends-on-env?` is `#t`. The `env` variable
-; refers to the current lexical environment. It may also have Racket
-; syntax objects, so as to refer unambiguously to Racket module
+; free variables corresponding to the `var-representation-in-racket`
+; versions of what the Fexpress free variables would be. It may also
+; have the free variable `env` if `depends-on-env?` is `#t`. The `env`
+; variable refers to the current lexical environment. It may also have
+; Racket syntax objects, so as to refer unambiguously to Racket module
 ; imports.
 ;
 ; Depending on the lexical environment using `depends-on-env?` can
@@ -238,14 +345,15 @@
 (struct compilation-result (depends-on-env? free-vars expr)
   #:transparent)
 
-; Returns a compilation result that just refers to the given Fexpress
+; Compiles an expression that just refers to the given Fexpress
 ; variable.
 ;
 ; Contract:
 ; (-> var? compilation-result?)
 ;
-(define (local-compilation-result var)
-  (compilation-result #f (hash var #t) (format-local-symbol var)))
+(define (var-compile var)
+  (compilation-result #f (hash var #t)
+    (var-representation-in-racket var)))
 
 ; TODO CLEANUP: Consider implementing some `compilation-result` monad
 ; operations here. They might make parts of the code more
@@ -266,7 +374,7 @@
   (define free-vars-list (hash-keys free-vars))
   (define local-free-vars-list
     (for/list ([free-var (in-list free-vars-list)])
-      (format-local-symbol free-var)))
+      (var-representation-in-racket free-var)))
   (define lambda-maker-compiled
     `(,#'lambda (env ,@local-free-vars-list)
        ,lambda-compiled))
@@ -279,7 +387,7 @@
           (namespace-anchor->namespace here)))
   (define free-var-type+-list
     (for/list ([free-var (in-list free-vars-list)])
-      (environment-get/t+ env free-var)))
+      (env-get/t+ env free-var)))
   (define free-var-val-list
     (for/list ([val/t+ (in-list free-var-type+-list)])
       (type+-eval val/t+)))
@@ -318,7 +426,7 @@
 
 
 
-; ===== Some positive types ==========================================
+; ===== Positive types ===============================================
 
 ; Field contracts:
 ; (-> any/c) (-> compilation-result?)
@@ -332,23 +440,24 @@
      (compile))
    (define (at-variable/t+ var type+)
      (match-define (lazy-value/t+ eval compile) type+)
-     (lazy-value/t+ eval (const (local-compilation-result var))))
+     (lazy-value/t+ eval (const (var-compile var))))
    (define (type+-continue-eval/t+ env cont val/t+)
      (continuation-expr-continue-eval/t+ env cont val/t+))])
 
+; (A helper for `any-value/t+`.)
+;
 ; Field contract:
-; compilation-result?
-(struct unknown-value/t+ (val-compiled) #:transparent
+; var?
+;
+(struct any-variable-bound-value/t+ (var) #:transparent
   #:methods gen:type+
   [(define (type+-eval type+)
-     (raise-arguments-error 'type+-eval
-       "Tried to evaluate the value level of a positive type that represented a run-time value during compilation. This may be an internal bug in the Fexpress proof of concept."
-       "positive type" type+))
+     (error "tried to evaluate the value level of the ascribed type `(any-value/t+)`"))
    (define (type+-compile type+)
-     (match-define (unknown-value/t+ val-compiled) type+)
-     val-compiled)
+     (match-define (any-variable-bound-value/t+ var) type+)
+     (var-compile var))
    (define (at-variable/t+ var type+)
-     (unknown-value/t+ (local-compilation-result var)))
+     (any-variable-bound-value/t+ var))
    (define (type+-continue-eval/t+ env cont val/t+)
      (continuation-expr-continue-eval/t+ env cont val/t+))])
 
@@ -359,13 +468,12 @@
    (define (type+-compile type+)
      (error "tried to compile the value level of the ascribed type `(any-value/t+)`"))
    (define (at-variable/t+ var type+)
-     (unknown-value/t+ (local-compilation-result var)))
+     (any-variable-bound-value/t+ var))
    (define (type+-continue-eval/t+ env cont val/t+)
      (continuation-expr-continue-eval/t+ env cont val/t+))])
 
 ; -----
-; NOTE COUPLING: Past this point, several things are mutually
-; recursive. See the other NOTE COUPLING for where this ends.
+; NOTE: Past this point, a few things are mutually recursive.
 ;
 ; Each element of the of the following 6-cycle depends on the one
 ; before (wrapping around from the first to the last):
@@ -375,21 +483,65 @@
 ;   * `apply/ce`
 ;   * `fexpress-eval/t+`
 ;   * `unknown-non-fexpr-apply/t+`
-;   * `any-value-continue-eval/t+`
+;   * `specific-value-continue-eval/t+`
 ;
 ; Each element of the following 3-path depends on each one adjacent to
 ; it (without wrapping):
 ;
 ;   * `specific-value/t+`
-;   * `any-value-continue-eval/t+`
+;   * `specific-value-continue-eval/t+`
 ;   * `apply/ce`
 ;
 ; Cycles of other lengths may be traced through the relationships
 ; already described.
+;
+; We also place `variable-bound-non-fexpr-value/t+` and
+; `non-fexpr-value/t+` here, although they depend on
+; `non-fexpr-continue-eval/t+` defined further below. We could put
+; them just after `non-fexpr-continue-eval/t+`, but we put them here
+; for code organization purposes, to group all the positive type
+; definitions together.
 ; -----
 
+; (A helper for `non-fexpr-value/t+`.)
+;
+; A positive type of values that we're allowing ourselves to assume to
+; be non-fexprs for optimization purposes, and which are also known to
+; be bound to the specified Fexpress variable.
+;
+; Field contract:
+; var?
+;
+(struct variable-bound-non-fexpr-value/t+ (var) #:transparent
+  #:methods gen:type+
+  [(define (type+-eval type+)
+     (error "tried to evaluate the value level of the ascribed type `(non-fexpr-value/t+)`"))
+   (define (type+-compile type+)
+     (match-define (variable-bound-non-fexpr-value/t+ var) type+)
+     (var-compile var))
+   (define (at-variable/t+ var type+)
+     (variable-bound-non-fexpr-value/t+ var))
+   (define (type+-continue-eval/t+ env cont val/t+)
+     (non-fexpr-continue-eval/t+ env cont val/t+))])
+
+; A positive type of values that we're allowing ourselves to assume to
+; be non-fexprs for optimization purposes.
+(struct non-fexpr-value/t+ () #:transparent
+  #:methods gen:type+
+  [(define (type+-eval type+)
+     (error "tried to evaluate the value level of the ascribed type `(non-fexpr-value/t+)`"))
+   (define (type+-compile type+)
+     (error "tried to compile the value level of the ascribed type `(non-fexpr-value/t+)`"))
+   (define (at-variable/t+ var type+)
+     (variable-bound-non-fexpr-value/t+ var))
+   (define (type+-continue-eval/t+ env cont val/t+)
+     (non-fexpr-continue-eval/t+ env cont val/t+))])
+
+; (A helper for `specific-value/t+`.)
+;
 ; Field contracts:
 ; var? any/c
+;
 (struct specific-variable-bound-value/t+ (var val) #:transparent
   #:methods gen:type+
   [(define (type+-eval type+)
@@ -397,14 +549,14 @@
      val)
    (define (type+-compile type+)
      (match-define (specific-variable-bound-value/t+ var val) type+)
-     (local-compilation-result var))
+     (var-compile var))
    (define (at-variable/t+ var type+)
      (match-define (specific-variable-bound-value/t+ original-var val)
        type+)
      (specific-variable-bound-value/t+ var val))
    (define (type+-continue-eval/t+ env cont val/t+)
      (match-define (specific-variable-bound-value/t+ var val) val/t+)
-     (any-value-continue-eval/t+ env cont val/t+ val))])
+     (specific-value-continue-eval/t+ env cont val/t+ val))])
 
 ; Field contract:
 ; any/c
@@ -420,7 +572,7 @@
      (specific-variable-bound-value/t+ var value))
    (define (type+-continue-eval/t+ env cont val/t+)
      (match-define (specific-value/t+ value) val/t+)
-     (any-value-continue-eval/t+ env cont val/t+ value))])
+     (specific-value-continue-eval/t+ env cont val/t+ value))])
 
 
 
@@ -455,7 +607,7 @@
        (lazy-value/t+
          (lambda ()
            (type+-eval
-             (any-value-continue-eval/t+
+             (specific-value-continue-eval/t+
                env
                (apply/ce args (done/ce (any-value/t_)))
                val/t+
@@ -507,7 +659,7 @@
     [`(,op-expr . ,args)
      (fexpress-eval/t+ env (apply/ce args cont) op-expr)]
     [(? symbol? var)
-     (type+-continue-eval/t+ env cont (environment-get/t+ env var))]
+     (type+-continue-eval/t+ env cont (env-get/t+ env var))]
     [(? literal? val)
      (type+-continue-eval/t+ env cont
        ; TODO LAZY: Rather than just using `lazy-value/t+` here, we
@@ -519,8 +671,8 @@
            (compilation-result #f (hash) `(,#'#%datum . ,val)))))]
     [_ (error "Unrecognized expression")]))
 
-; Performs a Racket-like procedure call behavor, a fallback for when
-; a value that's invoked is a general Racket value rather than an
+; Performs a Racket-like procedure call behavor, a fallback for when a
+; value that's invoked is a general Racket value rather than an
 ; Fexpress `fexpr?`.
 ;
 ; Contract:
@@ -602,7 +754,7 @@
 ; The given `val/t+` type should be a type which evaluates to the
 ; value `val`.
 ;
-(define (any-value-continue-eval/t+ env cont val/t+ val)
+(define (specific-value-continue-eval/t+ env cont val/t+ val)
   (cond
     [(fexpr? val) (fexpr-continue-eval/t+ env cont val/t+ val)]
     [#t
@@ -648,45 +800,6 @@
     [(apply/ce args cont)
      (unknown-non-fexpr-apply/t+ env cont val/t+ val/t+ args)]
     [_ (continuation-expr-continue-eval/t+ env cont val/t+)]))
-
-
-
-; ===== Optimization hints that a value is not an fexpr ==============
-
-; A positive type of values that we're allowing ourselves to assume to
-; be non-fexprs for optimization purposes, and which are also known to
-; be bound to the specified Fexpress variable.
-;
-; Field contract:
-; var?
-;
-(struct variable-bound-non-fexpr-value/t+ (var) #:transparent
-  #:methods gen:type+
-  [(define (type+-eval type+)
-     ; TODO: Figure out if we should report this error in terms of
-     ; `variable-bound-non-fexpr-value/t+` even though it's more of an
-     ; implementation detail.
-     (error "tried to evaluate the value level of the ascribed type `(non-fexpr-value/t+)`"))
-   (define (type+-compile type+)
-     (match-define (variable-bound-non-fexpr-value/t+ var) type+)
-     (local-compilation-result var))
-   (define (at-variable/t+ var type+)
-     (variable-bound-non-fexpr-value/t+ var))
-   (define (type+-continue-eval/t+ env cont val/t+)
-     (non-fexpr-continue-eval/t+ env cont val/t+))])
-
-; A positive type of values that we're allowing ourselves to assume to
-; be non-fexprs for optimization purposes.
-(struct non-fexpr-value/t+ () #:transparent
-  #:methods gen:type+
-  [(define (type+-eval type+)
-     (error "tried to evaluate the value level of the ascribed type `(non-fexpr-value/t+)`"))
-   (define (type+-compile type+)
-     (error "tried to compile the value level of the ascribed type `(non-fexpr-value/t+)`"))
-   (define (at-variable/t+ var type+)
-     (variable-bound-non-fexpr-value/t+ var))
-   (define (type+-continue-eval/t+ env cont val/t+)
-     (non-fexpr-continue-eval/t+ env cont val/t+))])
 
 
 
@@ -776,8 +889,8 @@
                            ([arg-var (in-list arg-vars)]
                             [arg-value (in-list arg-values)])
                    (hash-set env arg-var
-                     (specific-variable-bound-value/t+ arg-var
-                                                       arg-value))))
+                     (at-variable/t+ arg-var
+                       (specific-value/t+ arg-value)))))
                (type+-eval
                  (fexpress-eval/t+ body-env (done/ce (any-value/t_))
                                    body)))))]
@@ -815,7 +928,7 @@
       [_
        (list
          (for/list ([arg-var (in-list arg-vars)])
-           (unknown-value/t+ (local-compilation-result arg-var)))
+           (at-variable/t+ arg-var (any-value/t+)))
          (any-value/t_))]))
   (define body-env
     (for/fold ([env env])
@@ -835,9 +948,10 @@
                  (for/list ([arg-var (in-list arg-vars)])
                    `(
                       ',arg-var
-                      (,#'specific-variable-bound-value/t+
-                        (,#'quote ,arg-var)
-                        ,(format-local-symbol arg-var))))))])
+                      (,#'at-variable/t+ (,#'quote ,arg-var)
+                        (,#'specific-value/t+
+                          ,(var-representation-in-racket
+                             arg-var)))))))])
          ,body-compiled)
       body-compiled))
   (define free-vars
@@ -847,7 +961,7 @@
   (define lambda-compiled
     `(,#'lambda
        ,(for/list ([arg-var (in-list arg-vars)])
-          (format-local-symbol arg-var))
+          (var-representation-in-racket arg-var))
        ,body-with-env-compiled))
   (compilation-result depends-on-env? free-vars lambda-compiled))
 
@@ -917,30 +1031,15 @@
 ; ===== The Fexpress entrypoint ======================================
 
 ; Contract:
-; (-> env?)
-(define (fexpress-make-base-env)
-  (define naive-env
-    (hash 'type+-eval type+-eval
-          'eval/t+ fexpress-eval/t+
-          'done/ce done/ce
-          'any-value/t_ any-value/t_
-          'make-base-env fexpress-make-base-env
-          'ilambda fexpress-ilambda
-          'clambda fexpress-clambda
-          'the fexpress-the
-          '+ +
-          '* *
-          'app (lambda (op . args) (apply op args))))
-  (for/hash ([(var val) (in-hash naive-env)])
-    (values var (specific-variable-bound-value/t+ var val))))
+; (-> (hash/c var? any/c) env?)
+(define (env-of-specific-values specific-values)
+  (for/fold ([env (hash)]) ([(var val) (in-hash specific-values)])
+    (hash-set env var (at-variable/t+ var (specific-value/t+ val)))))
 
 ; Contract:
-; (-> any/c any/c)
+; (-> env? any/c any/c)
 ;
 ; The `expr` should be an s-expression of Fexpress code.
 ;
-(define (fexpress-eval-in-base-env expr)
-  (type+-eval
-    (fexpress-eval/t+ (fexpress-make-base-env)
-                      (done/ce (any-value/t_))
-                      expr)))
+(define (fexpress-eval env expr)
+  (type+-eval (fexpress-eval/t+ env (done/ce (any-value/t_)) expr)))

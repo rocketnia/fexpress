@@ -26,43 +26,58 @@
 ; (We provide nothing from this module.)
 
 
+(define test-env
+  (env-of-specific-values
+    (hash 'the fexpress-the
+          'ilambda fexpress-ilambda
+          'clambda fexpress-clambda
+          'funcall (lambda (f . args) (apply f args))
+          '+ +
+          '* *)))
+
+; NOTE: This example is in the docs.
 (check-equal?
-  (fexpress-eval-in-base-env
+  (fexpress-eval test-env
     '(+ 1 2))
   3)
 
+; NOTE: This example is in the docs.
 (check-equal?
-  (fexpress-eval-in-base-env
+  (fexpress-eval test-env
     '((ilambda (x y) (+ x y 3)) 1 2))
   6)
 
+; NOTE: This example is in the docs.
 (check-equal?
-  (fexpress-eval-in-base-env
+  (fexpress-eval test-env
     '((clambda (x y) (+ x y 3)) 1 2))
   6)
 
+; NOTE: This example is in the docs.
 (check-equal?
-  (fexpress-eval-in-base-env
-    '(app
+  (fexpress-eval test-env
+    '(funcall
        (clambda (square)
-         (app
+         (funcall
            (clambda (double)
-             (app double
-               (app double (+ (app square 3) (app square 4)))))
+             (funcall double
+               (funcall double
+                 (+ (funcall square 3) (funcall square 4)))))
            (clambda (x) (+ x x))))
        (clambda (x) (* x x))))
   100)
 
 (check-equal?
-  (fexpress-eval-in-base-env
+  (fexpress-eval test-env
     '(((clambda (x y) (clambda (z) (+ x y z))) 1 2) 3))
   6)
 
+; NOTE: This example is in the docs.
 (check-equal?
   (
     (
       (
-        (fexpress-eval-in-base-env
+        (fexpress-eval test-env
 
           ; This should evaluate to a curried composition function.
           ;
