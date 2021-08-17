@@ -26,6 +26,7 @@
        symbol?)))
 @(require
    (for-label (only-in racket/contract/base any/c hash/c listof)))
+@(require (for-label (only-in racket/math natural?)))
 
 @(require (for-label fexpress/proof-of-concept))
 
@@ -107,7 +108,44 @@ The building blocks provided here make the language capable of doing simple lamb
 }
 
 
-@subsection[#:tag "fexprs-for-lambda"]{Fexprs for Lambda Operations}
+@subsection[#:tag "fexprs"]{Fexprs}
+
+@defproc[(fexpr? [v any/c]) boolean?]{
+  Returns whether the given value is an Fexpress fexpr.
+}
+
+@defthing[gen:fexpr any/c]{
+  A generic interface for Fexpress fexprs, which must implement the method @racket[fexpr-continue-eval/t+].
+}
+
+@defproc[
+  (fexpr-continue-eval/t+ [env env?]
+                          [cont continuation-expr?]
+                          [val/t+ type+?]
+                          [val fexpr?])
+  type+?
+]{
+  (Calls fexprs, namely the given one.) Returns a @tech{positive type} for the potential values which result from transforming the given singleton positive type and its given value (an fexpr) according to the series of steps and the target @tech{negative type} listed in the given @tech{continuation expression}.
+  
+  There are many @tt{...-continue-eval/t+} operations in Fexpress, and this is the one to call when the actual @emph{value} of the original type is known and is definitely an fexpr. The fexpr can implement its own operation-specific behavior here, or it can dispatch again to @racket[continuation-expr-continue-eval/t+] to handle a continuation expression it doesn't know how to interpret itself.
+  
+  The given @racket[val/t+] type should be a type which evaluates to the value @racket[val].
+}
+
+@defproc[
+  (makeshift-fexpr [continue-eval/t+
+                    (-> env? continuation-expr? type+? type+?)])
+  fexpr?
+]{
+  Returns an Fexpress fexpr that has the given behavior for @racket[fexpr-continue-eval/t+].
+  
+  This may be more convenient than defining an instance of @racket[gen:fexpr].
+}
+
+
+@subsubsection[#:tag "fexprs-for-lambda"]{
+  Fexprs for Lambda Operations
+}
 
 @defform[#:kind "fexpr" (fexpress-ilambda (arg-id ...) body-expr)]{
   An Fexpress @racket[fexpr?] implementing an interpreted @racket[lambda] operation. This doesn't attempt to compile the body. The resulting function evaluates the body dynamically every time it's called.
@@ -125,7 +163,7 @@ The building blocks provided here make the language capable of doing simple lamb
   (parse-lambda-args [err-name symbol?] [args any/c])
   parsed-lambda-args?
 ]{
-  Asserts that the given subforms are in the format expected for an @racket[fexpress-ilambda] or @racket[fexpress-clambda] form -- namely, a list of two elements, the first of which is a list of mutually unique variables and the second of which, the body, is any value. (The body is usually an s-expression representing an Fexpress expression.) If the subforms do fit this format, returns a @racket[parsed-lambda-args] struct carrying the number of arguments, the argument variable names, and the body. If they don't, an error attributed to the operation name given by `err-name` will be raised.
+  Asserts that the given subforms are in the format expected for an @racket[fexpress-ilambda] or @racket[fexpress-clambda] form---namely, a list of two elements, the first of which is a list of mutually unique variables and the second of which, the body, is any value. (The body is usually an s-expression representing an Fexpress expression.) If the subforms do fit this format, returns a @racket[parsed-lambda-args] struct carrying the number of arguments, the argument variable names, and the body. If they don't, an error attributed to the operation name given by `err-name` will be raised.
 }
 
 @defstruct*[
@@ -142,7 +180,7 @@ The building blocks provided here make the language capable of doing simple lamb
 }
 
 
-@subsection[#:tag "an-fexpr-for-type-ascription"]{
+@subsubsection[#:tag "an-fexpr-for-type-ascription"]{
   An Fexpr for Type Ascription
 }
 
@@ -214,7 +252,7 @@ The building blocks provided here make the language capable of doing simple lamb
                                    [val any/c])
   type+?
 ]{
-  (Calls fexprs.) Returns a @tech{positive type} for the potential values which result from transforming the given singleton positive type and its given value according to the series of steps and the target negative type listed in the given @tech{continuation expression}.
+  (Calls fexprs.) Returns a @tech{positive type} for the potential values which result from transforming the given singleton positive type and its given value according to the series of steps and the target @tech{negative type} listed in the given @tech{continuation expression}.
   
   There are many @tt{...-continue-eval/t+} operations in Fexpress, and this is the one to call when the actual @emph{value} of the original type is known and can potentially be an fexpr with its own idea of how to proceed. A positive type processing a @racket[type+-continue-eval/t+] call usually dispatches to this itself when the type's value is known at compile time, and a continuation expression processing a @racket[continuation-expr-continue-eval/t+] call usually dispatches to this itself once the value is finally known at run time.
   
@@ -227,7 +265,7 @@ The building blocks provided here make the language capable of doing simple lamb
                               [val/t+ type+?])
   type+?
 ]{
-  (Calls fexprs.) Assuming the given @tech{positive type} and its values have no custom fexpr-calling behavior, returns a positive type for the potential values which result from transforming the given one according to the series of steps and the target negative type listed in the given @tech{continuation expression}.
+  (Calls fexprs.) Assuming the given @tech{positive type} and its values have no custom fexpr-calling behavior, returns a positive type for the potential values which result from transforming the given one according to the series of steps and the target @tech{negative type} listed in the given @tech{continuation expression}.
   
   There are many @tt{...-continue-eval/t+} operations in Fexpress, and this is the one to call when the positive type @emph{and} its values should have their custom fexpr-calling behavior ignored. Fexpress doesn't usually ignore values' fexpr-calling behavior like this, but since this can lead to better performance, it can be explicitly requested by using @racket[(fexpress-the _...)] to ascribe a type that uses @racket[non-fexpr-value/t+].
 }

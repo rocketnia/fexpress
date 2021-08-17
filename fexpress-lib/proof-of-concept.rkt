@@ -42,13 +42,20 @@
     [free-vars? (-> any/c boolean?)])
 
   ; Generic interfaces to serve as extension points
-  ; TODO DOCS: Document these.
+  ; TODO DOCS: Document the continuation expressions and types in
+  ; their respective sections.
   gen:fexpr
   (contract-out
     [fexpr? (-> any/c boolean?)]
     [fexpr-continue-eval/t+
      (-> env? continuation-expr? type+? fexpr? type+?)])
+  ; NOTE: Instead of exporting this as a struct, we export only the
+  ; constructor.
+  #;
   (struct-out makeshift-fexpr)
+  (contract-out
+    [makeshift-fexpr
+     (-> (-> env? continuation-expr? type+? type+?) fexpr?)])
   gen:continuation-expr
   (contract-out
     [continuation-expr? (-> any/c boolean?)]
