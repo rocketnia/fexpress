@@ -44,9 +44,11 @@ At some point, there may be two variants of Fexpress.
 
 The current variant---@racketmodname[fexpress/proof-of-concept]---is intended to help demonstrate the principles at work. For this reason, it has only a minimalistic set of features, it doesn't have deep library dependencies, and we haven't gone to any special effort to harden its API for future stability. If the concepts that need to be demonstrated change, we might add newly needed methods to some of the generic interfaces, might allow an @racket[env?] to be something more expressive or restrictive than a hash table, and so on.
 
-The other variant of Fexpress---potentially the @racketmodname[fexpress] module proper, once it exists---could be a more full-fledged system for using fexprs in Racket programs. This variant could better preserve Racket syntax object metadata for error reporting and Racket-style hygiene, and it could introduce features like editor highlighting to show what subexpressions of a program are making unoptimized fexpr calls.
+The other variant of Fexpress---potentially the @racketmodname[fexpress] module proper, once it exists---could be a more full-fledged system for using fexprs in Racket programs. This variant could better preserve Racket syntax object metadata for error reporting and Racket-style hygiene, and it could introduce features like editor highlighting to show what subexpressions of a program are making unoptimized fexpr calls. We can test the limits of how seamless an addition they can be to the Racket language.
 
-Seamlessness is not a particular goal of either variant of Fexpress. It might be tempting to ask whether we'll be able to pass Racket's @racket[and] to Racket's @racket[map], but the answers as they apply to Fexpress will likely be pretty boring: The @racket[map] abstraction hides its implementation by design, so it should not hand off its internal code to an fexpr. The @racket[and] abstraction expects input in the form of an uncompiled list of subforms, and a bundle of fully evaluated positional arguments and keyword arguments is not the same thing, so it's fine for @racket[and] to be unprepared for it and to reject it as a usage error. These remain good design choices even in a language that has fexprs in it.
+However, there's a certain kind of seamlessness Fexpress won't attempt: Racket's @racket[and] can't be passed into Racket's @racket[map], and sometimes this surprises people who expect macros to act like functions. In languages with fexprs as the default abstraction, it tends to be easy to implement @racket[and] and @racket[map] in such a way that this interaction succeeds. However, that amounts to a much different design for these operations, and not a better one. If Racket's @racket[map] refuses to pass its internal code to an fexpr, that's good encapsulation of its implementation details. And Racket's @racket[and] is designed to operate on input that's an unevaluated syntax object (along with various macroexpansion-time parameters), so if the input it receives is actually a run-time collection of positional and keyword arguments, it's quite reasonable for it to reject that input as a likely mistake by the user. These would be good design choices even in a language that had fexprs in it, and we don't intend to circumvent them with Fexpress.
+
+Anyhow, the Fexpress that exists now is the simplified proof of concept. Our hope is to demonstrate that a viable strategy exists for mixing fexprs with compilation. Thanks to extension points like @racket[gen:fexpr], it could be put to some fun use, but keep in mind the instability of the API.
 
 (TODO: Finish documenting everything. As you can see, some things are currently red links.)
 
@@ -62,9 +64,9 @@ Seamlessness is not a particular goal of either variant of Fexpress. It might be
 
 @defmodule[fexpress/proof-of-concept]
 
-This module provides an open-faced implementation of a minimalistic, experimental Fexpress language. Not all the contracts are completely enforced, nor are they stable.
+This module provides an open-faced implementation of a minimalistic, experimental Fexpress language. Not all the contracts documented here are completely enforced, nor are they stable.
 
-The building blocks provided here make the language capable of doing simple lambda calculus, with more or less efficiency. It can be extended by implementing more @racket[gen:fexpr] values in Racket.
+The building blocks provided here make the language capable of doing simple lambda calculus, with more or less efficiency depending on the use of @racket[fexpress-ilambda] or @racket[fexpress-clambda]. This language can be extended by implementing more @racket[gen:fexpr] values in Racket, and possibly more @racket[gen:continuation-expr], @racket[gen:type+], and @racket[gen:type_] values for them to interact with.
 
 
 @subsection[#:tag "entrypoint"]{Entrypoint}
@@ -116,17 +118,19 @@ The building blocks provided here make the language capable of doing simple lamb
 
 @subsection[#:tag "fexpr"]{Fexprs}
 
-An @deftech{fexpr} is a kind of abstraction that's existed since the earliest implementations of Lisp, and it's something in between a function and a macro. Like a function, it's a first-class value that can do its work at run time. Like a macro, it receives its arguments unevaluated, and---at least in the better incarnations---it also receives some kind of access to its caller's local scope with which to understand these arguments' intended semantics.
+An @deftech{fexpr} (sometimes known as a @deftech{first-class macro}) is a kind of abstraction that's existed since the earliest implementations of Lisp.
 
-This combination lets programmers express a few things that they can't express with functions and macros, since fexprs can express decisions that depend on a combination of run-time information and source code information.
+An fexpr is something in between a function and a macro. Like a function, it's a first-class value that can do its work at run time. Like a macro, it receives its arguments unevaluated, and---at least in the better incarnations---it also receives some kind of access to its caller's local scope with which to understand these arguments' intended semantics.
 
-However, this combination generally means programs can't be compiled effectively, because certain expressions need to be preserved as-is until run time.
+This combination lets programmers express a few things that they can't express with functions and macros, since fexprs can compute their results based on a synthesis of run-time information and source code information.
+
+However, this combination generally means programs can't be compiled effectively, because certain expressions need to be preserved as-is until run time. If a programmer wants to @emph{express} a compilable program, fexprs usually get in the way of that, and the combination of macros and functions is arguably more expressive than fexprs for that task.
 
 The Fexpress proof of concept shows how to get around this limitation by giving fexprs even more information to work with. These fexprs receive a @tech{continuation expression} which contains a @tech{negative type} where they can find optimization hints to apply in their behavior.
 
-There are also @tech{positive type} values, which are types that can carry assumptions about the fexpr-calling behavior of their potential values (and hence act a little like fexprs in their own way). Positive types are the tool the fexpr evaluator needs to proceed into binding forms like @racket[fexpress-clambda] and implement some of their behavior early, before the actual values of the variables are known.
+There are also @tech{positive type} values, which are types that can perform some fexpr-calling behavior on behalf of their potential values. Positive types are the tool the fexpr evaluator needs to proceed into binding forms like @racket[fexpress-clambda] and implement some of their behavior early, before the actual values of the variables are known. With careful programming, the remaining part of the behavior is compiled code, allowing Fexpress to express compilable programs.
 
-(TODO: How new are the things we're demonstrating here? Fexprs have been in active use in the newLISP, Picolisp, and (arguably) R communities. There's been a lot of research on compiling reflective languages, as seen in "Collapsing Towers of Interpreters." There's also a potential connection to JIT in general, and possibly to the compilation of algebraic effect systems.)
+(TODO: How new are the things we're demonstrating here? Fexprs have been in active use in the newLISP, PicoLisp, and (arguably) R communities. There's been a lot of research on compiling reflective languages, as seen in "Collapsing Towers of Interpreters." There's also a potential connection to JIT in general, and possibly to the compilation of algebraic effect systems.)
 
 @defproc[(fexpr? [v any/c]) boolean?]{
   Returns whether the given value is an Fexpress @tech{fexpr}.
