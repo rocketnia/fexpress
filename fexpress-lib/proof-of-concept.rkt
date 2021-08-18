@@ -35,11 +35,12 @@
 
 (provide
 
-  ; Contracts
+  ; Representing concepts in Fexpress source code
   (contract-out
     [var? (-> any/c boolean?)]
+    [free-vars? (-> any/c boolean?)]
     [env? (-> any/c boolean?)]
-    [free-vars? (-> any/c boolean?)])
+    [env-get/t+ (-> env? var? type+?)])
 
   ; Generic interfaces to serve as extension points
   gen:fexpr
@@ -72,9 +73,7 @@
     [type_? (-> any/c boolean?)])
 
   ; Utilities for compiling to Racket
-  ; TODO DOCS: Document these.
   (contract-out
-    [env-get/t+ (-> env? var? type+?)]
     [var-representation-in-racket (-> var? symbol?)])
   (struct-out compilation-result)
   (contract-out
@@ -149,29 +148,51 @@
 
 
 
-; ===== Contracts ====================================================
+; ===== Representing concepts in Fexpress source code ================
 
 ; A contract that recognizes this language's variable names, which are
 ; represented by interned symbols.
+;
+; Contract:
+; (-> any/c boolean?)
+;
 (define (var? v)
   (and (symbol? v) (symbol-interned? v)))
+
+; A contract that recognizes Fexpress free variable sets, which are
+; represented by immutable hashes from variable names to `#t`.
+;
+; Contract:
+; (-> any/c boolean?)
+;
+(define (free-vars? v)
+  (and (hash? v) (immutable? v)
+    (for/and ([(k v) (in-hash v)])
+      (and (var? k) (equal? #t v)))))
 
 ; A contract that recognizes this language's lexical environments,
 ; which are represented by immutable hashes from variable names to
 ; positive types. Besides being positive types, the values of the hash
 ; should also have successful `type+-compile` behavior, and it should
 ; be equivalent to `var-compile` for the same Fexpress variable.
+;
+; Contract:
+; (-> any/c boolean?)
+;
 (define (env? v)
   (and (hash? v) (immutable? v)
     (for/and ([(k v) (in-hash v)])
       (and (var? k) (type+? v)))))
 
-; A contract that recognizes Fexpress free variable sets, which are
-; represented by immutable hashes from variable names to `#t`.
-(define (free-vars? v)
-  (and (hash? v) (immutable? v)
-    (for/and ([(k v) (in-hash v)])
-      (and (var? k) (equal? #t v)))))
+; Contract:
+; (-> env? var? type+?)
+(define (env-get/t+ env var)
+  (hash-ref env var
+    (lambda ()
+      (raise-arguments-error 'env-get/t+
+        "Unbound variable"
+        "var" var
+        "env" env))))
 
 
 
@@ -312,16 +333,6 @@
 
 ; ===== Utilities for compiling to Racket ============================
 
-; Contract:
-; (-> env? var? type+?)
-(define (env-get/t+ env var)
-  (hash-ref env var
-    (lambda ()
-      (raise-arguments-error 'env-get/t+
-        "Unbound variable"
-        "var" var
-        "env" env))))
-
 ; Converts an Fexpress variable name into the symbol it should be
 ; represented as in compiled Racket code for `compilation-result?`
 ; values. Currently, it's the same symbol but with "-" prepended to
@@ -330,8 +341,8 @@
 ; Contract:
 ; (-> var? symbol?)
 ;
-(define (var-representation-in-racket sym)
-  (format-symbol "-~a" sym))
+(define (var-representation-in-racket var)
+  (format-symbol "-~a" var))
 
 ; Field contracts:
 ; boolean? free-vars? any/c
@@ -345,13 +356,14 @@
 ; imports.
 ;
 ; Depending on the lexical environment using `depends-on-env?` can
-; lead to performance degradation in code that results, since an
-; up-to-date first-class environment value must be constructed
-; whenever variables come into scope.
+; lead to performance degradation in the surrounding parts of the
+; Fexpress program, since an up-to-date first-class environment value
+; must be constructed whenever variables come into scope.
 ;
 ; While we could make more extensive use of Racket syntax objects, we
 ; keep their use to a minimum here to demonstrate this language in a
-; way that can be easily ported to other Lisp dialects.
+; way that can be easily ported to other Lisp dialects and other
+; languages with `eval` variants available.
 ;
 (struct compilation-result (depends-on-env? free-vars expr)
   #:transparent)
@@ -371,9 +383,10 @@
 ; straightforward for people used to monads, but I'm not sure if
 ; that's the audience.
 
-; Evaluates a compilation result in a given Fexpress environment. We
-; use this to delegate to Racket's own compiler to give us optimized
-; code.
+; Evaluates the given Fexpress compilation result, using the given
+; Fexpress environment to resolve its references to free variables.
+; This uses Racket's `eval`, which fully compiles the Racket code
+; before executing it.
 ;
 ; Contract:
 ; (-> env? compilation-result? any/c)
@@ -680,7 +693,10 @@
          (const val)
          (const
            (compilation-result #f (hash) `(,#'#%datum . ,val)))))]
-    [_ (error "Unrecognized expression")]))
+    [_
+     (raise-arguments-error 'fexpress-eval/t+
+       "unrecognized expression"
+       "expr" expr)]))
 
 ; Given unevaluated arguments, performs a Racket-like procedure call
 ; behavor, which first evaluates the arguments. This is a fallback for

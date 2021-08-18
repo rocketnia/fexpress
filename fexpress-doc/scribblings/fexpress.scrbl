@@ -22,8 +22,8 @@
 @(require
    (for-label
      (only-in racket/base
-       + * and apply boolean? define exact-integer? hash lambda list
-       map symbol?)))
+       + * and apply boolean? define eval exact-integer? hash hash-ref
+       identifier? lambda list map symbol?)))
 @(require
    (for-label (only-in racket/contract/base any/c hash/c listof)))
 @(require (for-label (only-in racket/math natural?)))
@@ -44,7 +44,7 @@ At some point, there may be two variants of Fexpress.
 
 The current variant---@racketmodname[fexpress/proof-of-concept]---is intended to help demonstrate the principles at work. For this reason, it has only a minimalistic set of features, it doesn't have deep library dependencies, and we haven't gone to any special effort to harden its API for future stability. If the concepts that need to be demonstrated change, we might add newly needed methods to some of the generic interfaces, might allow an @racket[env?] to be something more expressive or restrictive than a hash table, and so on.
 
-The other variant of Fexpress---potentially the @racketmodname[fexpress] module proper, once it exists---could be a more full-fledged system for using fexprs in Racket programs. This variant could better preserve Racket syntax object metadata for error reporting and Racket-style hygiene, and it could introduce features like editor highlighting to show what subexpressions of a program are making unoptimized fexpr calls. We can test the limits of how seamless an addition they can be to the Racket language.
+The other variant of Fexpress---potentially the @tt{fexpress} module proper, once it exists---could be a more full-fledged system for using fexprs in Racket programs. This variant could better preserve Racket syntax object metadata for error reporting and Racket-style hygiene, and it could introduce features like editor highlighting to show what subexpressions of a program are making unoptimized fexpr calls. We can test the limits of how seamless an addition they can be to the Racket language.
 
 However, there's a certain kind of seamlessness Fexpress won't attempt: Racket's @racket[and] can't be passed into Racket's @racket[map], and sometimes this surprises people who expect macros to act like functions. In languages with fexprs as the default abstraction, it tends to be easy to implement @racket[and] and @racket[map] in such a way that this interaction succeeds. However, that amounts to a much different design for these operations, and not a better one. If Racket's @racket[map] refuses to pass its internal code to an fexpr, that's good encapsulation of its implementation details. And Racket's @racket[and] is designed to operate on input that's an unevaluated syntax object (along with various macroexpansion-time parameters), so if the input it receives is actually a run-time collection of positional and keyword arguments, it's quite reasonable for it to reject that input as a likely mistake by the user. These would be good design choices even in a language that had fexprs in it, and we don't intend to circumvent them with Fexpress.
 
@@ -394,7 +394,29 @@ A @deftech{negative type} in Fexpress essentially acts like an optimization hint
 }
 
 
-@subsection[#:tag "evaluating-and-compiling"]{Evaluating and Compiling}
+@subsection[#:tag "phases"]{Phases of the Language}
+
+
+@subsubsection[#:tag "representing-source"]{Representing Concepts in the Source}
+
+@defproc[(var? [v any/c]) boolean?]{
+  Returns whether the given value is an Fexpress variable name, which is represented by an interned symbol.
+}
+
+@defproc[(env? [v any/c]) boolean?]{
+  Returns whether the given value is an Fexpress lexical environment, which is represented by an immutable hash from variable names to @tech{positive types}. Besides being positive types, the values of the hash should also have successful @racket[type+-compile] behavior, and they should be equivalent to @racket[var-compile] for the same Fexpress variable.
+}
+
+@defproc[(free-vars? [v any/c]) boolean?]{
+  Returns whether the given value is an Fexpress free variable set, which is represented by an immutable hash from variable names to @racket[#t].
+}
+
+@defproc[(env-get/t+ [env env?] [var var?]) type+?]{
+  Gets the @tech{positive type} associated with the given variable name in the given environment. Unlike simply calling @racket[hash-ref], this raises an informative error if the variable doesn't have a binding in the environment.
+}
+
+
+@subsubsection[#:tag "evaluator-compiler"]{The Combination Evaluator-Compiler}
 
 @defproc[
   (fexpress-eval/t+ [env env?] [cont continuation-expr?] [expr any/c])
@@ -448,16 +470,32 @@ A @deftech{negative type} in Fexpress essentially acts like an optimization hint
 }
 
 
-@subsection[#:tag "contracts"]{Contracts}
+@subsubsection[#:tag "compiling-to-racket"]{Compiling to Racket}
 
-@defproc[(var? [v any/c]) boolean?]{
-  Returns whether the given value is an Fexpress variable name, which is represented by an interned symbol.
+@defproc[(var-representation-in-racket [var var?]) symbol?]{
+  Converts an Fexpress variable name into the symbol it should be represented as in compiled Racket code for @racket[compilation-result?] values. Currently, it's the same symbol but with @racket["-"] prepended to it.
 }
 
-@defproc[(env? [v any/c]) boolean?]{
-  Returns whether the given value is an Fexpress lexical environment, which is represented by an immutable hash from variable names to @tech{positive types}. Besides being positive types, the values of the hash should also have successful @racket[type+-compile] behavior, and they should be equivalent to @racket[var-compile] for the same Fexpress variable.
+@defstruct*[
+  compilation-result
+  ([depends-on-env? boolean?] [free-vars free-vars?] [expr any/c])
+]{
+  A bundle containing an s-expression ready to compile as Racket code and some information about its dependencies. If it depends on the variable @tt{env} being bound to a first-class representation of the entire lexical environment, the @racket[_depends-on-env?] field should be @racket[#t]. If it depends on Fexpress variables, those should be accounted for in the @racket[_free-vars] field.
+  
+  The @racket[_expr] should be an s-expression of Racket code. It may have free variables corresponding to the @racket[var-representation-in-racket] versions of the Fexpress free variables listed in @racket[_free-vars]. It may also have the free variable @tt{env} if @racket[_depends-on-env?] is @racket[#t]. The @tt{env} variable refers to the current lexical environment. It should not have other free variables, but if it needs to refer to Racket module bindings, it may do so with an embedded @racket[identifier?] syntax object.
+  
+  Depending on the lexical environment using @racket[_depends-on-env?] can lead to performance degradation in the surrounding parts of the Fexpress program, since an up-to-date first-class environment value must be constructed whenever variables come into scope.
+  
+  While we could make more extensive use of Racket syntax objects, we keep their use to a minimum here to demonstrate this language in a way that can be easily ported to other Lisp dialects and other languages with @racket[eval] variants available.
 }
 
-@defproc[(free-vars? [v any/c]) boolean?]{
-  Returns whether the given value is an Fexpress free variable set, which is represented by an immutable hash from variable names to @racket[#t].
+@defproc[(var-compile [var var?]) compilation-result?]{
+  Compiles an expression that just refers to the given Fexpress variable.
+}
+
+@defproc[
+  (compilation-result-eval [env env?] [compiled compilation-result?])
+  any/c
+]{
+  Evaluates the given Fexpress compilation result, using the given Fexpress @racket[env?] to resolve its references to free variables. This uses Racket's @racket[eval], which fully compiles the Racket code before executing it.
 }
