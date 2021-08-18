@@ -22,10 +22,14 @@
 @(require
    (for-label
      (only-in racket/base
-       + * and apply boolean? define eval exact-integer? hash hash-ref
-       identifier? lambda list map symbol?)))
+       + * add1 and apply boolean? define eval exact-integer? hash
+       hash-ref identifier? lambda list map parameterize sqrt
+       symbol?)))
 @(require
-   (for-label (only-in racket/contract/base any/c hash/c listof)))
+   (for-label
+     (only-in racket/contract/base
+       -> any any/c hash/c listof parameter/c)))
+@(require (for-label (only-in racket/pretty pretty-print)))
 @(require (for-label (only-in racket/math natural?)))
 
 @(require (for-label fexpress/proof-of-concept))
@@ -33,7 +37,11 @@
 @(require (only-in scribble/example examples make-eval-factory))
 
 @(define example-eval
-   (make-eval-factory (list 'racket/base 'fexpress/proof-of-concept)))
+   (make-eval-factory (list 'racket/base
+                            'racket/pretty
+                            'fexpress/proof-of-concept)))
+
+@(define persistent-example-eval (example-eval))
 
 
 @title{Fexpress}
@@ -49,8 +57,6 @@ The other variant of Fexpress---potentially the @tt{fexpress} module proper, onc
 However, there's a certain kind of seamlessness Fexpress won't attempt: Racket's @racket[and] can't be passed into Racket's @racket[map], and sometimes this surprises people who expect macros to act like functions. In languages with fexprs as the default abstraction, it tends to be easy to implement @racket[and] and @racket[map] in such a way that this interaction succeeds. However, that amounts to a much different design for these operations, and not a better one. If Racket's @racket[map] refuses to pass its internal code to an fexpr, that's good encapsulation of its implementation details. And Racket's @racket[and] is designed to operate on input that's an unevaluated syntax object (along with various macroexpansion-time parameters), so if the input it receives is actually a run-time collection of positional and keyword arguments, it's quite reasonable for it to reject that input as a likely mistake by the user. These would be good design choices even in a language that had fexprs in it, and we don't intend to circumvent them with Fexpress.
 
 Anyhow, the Fexpress that exists now is the simplified proof of concept. Our hope is to demonstrate that a viable strategy exists for mixing fexprs with compilation. Thanks to extension points like @racket[gen:fexpr], it could be put to some fun use, but keep in mind the instability of the API.
-
-(TODO: Finish documenting everything. As you can see, some things are currently red links.)
 
 (TODO: Currently, there isn't actually an operation for writing simple fexprs. Fexpress users can build one, but let's provide one for demonstration purposes.)
 
@@ -76,7 +82,7 @@ The building blocks provided here make the language capable of doing simple lamb
   
   
   @examples[
-    #:eval (example-eval)
+    #:eval persistent-example-eval
     
     (define _test-env
       (env-of-specific-values
@@ -87,13 +93,20 @@ The building blocks provided here make the language capable of doing simple lamb
               '+ +
               '* *)))
     
-    (fexpress-eval _test-env
+    (define (_logging _body)
+      (parameterize ([current-fexpress-logger pretty-print])
+        (_body)))
+    
+    (define (_fexpress-eval-and-log _expr)
+      (_logging (lambda () (fexpress-eval _test-env _expr))))
+    
+    (_fexpress-eval-and-log
       '(+ 1 2))
-    (fexpress-eval _test-env
+    (_fexpress-eval-and-log
       '((ilambda (x y) (+ x y 3)) 1 2))
-    (fexpress-eval _test-env
+    (_fexpress-eval-and-log
       '((clambda (x y) (+ x y 3)) 1 2))
-    (fexpress-eval _test-env
+    (_fexpress-eval-and-log
       '(funcall
          (clambda (square)
            (funcall
@@ -113,6 +126,15 @@ The building blocks provided here make the language capable of doing simple lamb
   Creates an @racket[env?] from a hash that maps Fexpress variables to values.
   
   An @racket[env?] maps Fexpress variables to @tech{positive types} that compile to references to the same variables, so this wraps up the values in @racket[specific-value/t+] and sets up their compilation behavior with @racket[at-variable/t+].
+}
+
+@defthing[current-fexpress-logger (parameter/c (-> any/c any))]{
+  A parameter holding a procedure that the Fexpress proof of concept uses to log diagnostic messages in s-expression form. Currently, we log two things:
+  
+  @itemlist[
+    @item{Evaluation of Racket code, so that we can inspect what kind of Racket code Fexpress produces.}
+    @item{Moments where the compiled Racket code reenters the interpreter in order to call an fexpr. These moments are worth knowing about so we can optimize them away.}
+  ]
 }
 
 
@@ -209,21 +231,14 @@ There are also @tech{positive type} values, which are types that can perform som
 @defform[#:kind "fexpr" (fexpress-the val/t_ val-expr)]{
   An @tech{fexpr} implementing a type ascription operation. The subform @racket[val/t_] must be a @tech{negative type} syntactically, not just an expression that evaluates to one. The subform @racket[val-expr] is an expression the type applies to. The purpose of @tt{fexpress-the} is mainly to allow function bodies to use Lisp-1-style function application on local variables without inhibiting compilation.
   
+  As the following example shows, it's possible to use @tt{fexpress-the} to declare that the local variables @racket[_f] and @racket[_g] are non-@tech{fexprs}. This allows their use sites to be compiled into procedure calls rather than less efficient fexpr calls:
   
   @examples[
-    #:eval (example-eval)
-    
-    (define _test-env
-      (env-of-specific-values
-        (hash 'the fexpress-the
-              'ilambda fexpress-ilambda
-              'clambda fexpress-clambda
-              'funcall (lambda (_f . _args) (apply _f _args))
-              '+ +
-              '* *)))
+    #:label #f
+    #:eval persistent-example-eval
     
     (define _my-compose
-      (fexpress-eval _test-env
+      (_fexpress-eval-and-log
         `(the ,(->/t_ (list (non-fexpr-value/t+))
                  (->/t_ (list (non-fexpr-value/t+))
                    (any-value/t_)))
@@ -232,10 +247,43 @@ There are also @tech{positive type} values, which are types that can perform som
                (clambda (x)
                  (f (g x))))))))
     
-    (((_my-compose (lambda (_x) (+ 2 _x))) (lambda (_x) (+ 3 _x))) 1)
+    (_logging (lambda () (((_my-compose sqrt) add1) 8)))
   ]
   
-  (TODO: Demonstrate that the above example is able to compile without being inhibited by dynamic @tech{fexpr} features.)
+  If we don't declare that @racket[_g] is a non-fexpr, what happens is that the call to @racket[_g] is compiled into an invocation of the Fexpress interpreter. In order to pass a lexical environment into that interpreter, each surrounding @racket[fexpress-clambda] (or similar binding syntax) updates the local binding of @tt{env} so that the bindings held in @tt{env} always correspond to the lexical scope:
+  
+  @examples[
+    #:label #f
+    #:eval persistent-example-eval
+    
+    (define _my-less-typed-compose
+      (_fexpress-eval-and-log
+        `(the ,(->/t_ (list (non-fexpr-value/t+))
+                 (->/t_ (list (any-value/t+))
+                   (any-value/t_)))
+           (clambda (f)
+             (clambda (g)
+               (clambda (x)
+                 (f (g x))))))))
+    
+    (_logging (lambda () (((_my-less-typed-compose sqrt) add1) 8)))
+  ]
+  
+  If we don't use @tt{fexpress-the} at all, then we get the least optimized version of the code. This time, the call to @racket[_f] reenters the interpreter, and the call to @racket[_g] is just taken care of during that interpretation:
+  
+  @examples[
+    #:label #f
+    #:eval persistent-example-eval
+    
+    (define _my-untyped-compose
+      (_fexpress-eval-and-log
+        `(clambda (f)
+           (clambda (g)
+             (clambda (x)
+               (f (g x)))))))
+    
+    (_logging (lambda () (((_my-untyped-compose sqrt) add1) 8)))
+  ]
 }
 
 

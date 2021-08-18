@@ -21,19 +21,21 @@
 
 
 (require
-  (only-in racket/contract/base -> any/c contract-out hash/c listof))
+  (only-in racket/contract/base
+    -> any any/c contract-out hash/c listof parameter/c))
 (require (only-in racket/function const))
 (require (only-in racket/generic define-generics))
 (require (only-in racket/hash hash-union))
 (require (only-in racket/list append*))
 (require (only-in racket/match match match-define match-lambda**))
-; TODO: Figure out a better way to make this conditional than
-; commenting it out.
-;(require (only-in racket/pretty pretty-print))
 (require (only-in racket/syntax format-symbol))
 
 
 (provide
+
+  ; Diagnostic information collection
+  (contract-out
+    [current-fexpress-logger (parameter/c (-> any/c any))])
 
   ; Representing concepts in Fexpress source code
   (contract-out
@@ -145,6 +147,27 @@
 
 
 (define-namespace-anchor here)
+
+
+
+; ===== Diagnostic information collection ============================
+
+; A parameter holding a procedure that the Fexpress proof of concept
+; uses to log diagnostic messages in s-expression form. Currently, we
+; log two things:
+;
+;   * Evaluation of Racket code, so that we can inspect what kind of
+;     Racket code Fexpress produces.
+;
+;   * Moments where the compiled Racket code reenters the interpreter
+;     in order to call an fexpr. These moments are worth knowing about
+;     so we can optimize them away.
+;
+; Contract:
+; (parameter/c (-> any/c any))
+;
+(define current-fexpress-logger (make-parameter (lambda (message)
+                                                  (void))))
 
 
 
@@ -402,10 +425,9 @@
   (define lambda-maker-compiled
     `(,#'lambda (env ,@local-free-vars-list)
        ,lambda-compiled))
-  ; TODO: Figure out a better way to make these conditional than
-  ; commenting them out.
-;  (displayln "about to eval")
-;  (pretty-print (syntax->datum (datum->syntax #f lambda-maker-compiled)))
+  ((current-fexpress-logger)
+   (list "Evaluating Racket code:"
+         (syntax->datum (datum->syntax #f lambda-maker-compiled))))
   (define lambda-maker
     (eval lambda-maker-compiled
           (namespace-anchor->namespace here)))
@@ -647,12 +669,16 @@
              ; to compile the value, but we don't need to make any
              ; effort to reify that information here.
              ;
-             `(,#'type+-eval
-                 (,#'type+-continue-eval/t+
-                   env
-                   (,#'apply/ce (,#'quote ,args)
-                     (,#'done/ce (,#'any-value/t_)))
-                   (,#'specific-value/t+ ,op-compiled))))))))])
+             `(,#'begin
+                (
+                  (,#'current-fexpress-logger)
+                  "Reentering the interpreter")
+                (,#'type+-eval
+                  (,#'type+-continue-eval/t+
+                    env
+                    (,#'apply/ce (,#'quote ,args)
+                      (,#'done/ce (,#'any-value/t_)))
+                    (,#'specific-value/t+ ,op-compiled)))))))))])
 
 
 
