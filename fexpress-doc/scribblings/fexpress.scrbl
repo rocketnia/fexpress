@@ -58,7 +58,7 @@ However, there's a certain kind of seamlessness Fexpress won't attempt: Racket's
 
 Anyhow, the Fexpress that exists now is the simplified proof of concept. Our hope is to demonstrate that a viable strategy exists for mixing fexprs with compilation. Thanks to extension points like @racket[gen:fexpr], it could be put to some fun use, but keep in mind the instability of the API.
 
-(TODO: Currently, there isn't actually an operation for writing simple fexprs. Fexpress users can build one, but let's provide one for demonstration purposes.)
+(TODO: Currently, there isn't a dedicated operation for writing simple fexprs. Fexpress users can build one out of @racket[gen:fexpr], or just use @racket[makeshift-fexpr] in Fexpress code directly, but let's provide one at some point to ease the analogy between Fexpress and other fexpr-equipped languages.)
 
 
 
