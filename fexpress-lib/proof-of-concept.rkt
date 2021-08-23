@@ -115,7 +115,7 @@
     [literal? (-> any/c boolean?)]
     [fexpress-eval/t+ (-> env? continuation-expr? any/c type+?)]
     [unknown-non-fexpr-apply/t+
-     (-> env? continuation-expr? type+? type+? any/c type+?)]
+     (-> env? continuation-expr? type+? (-> any/c) any/c type+?)]
     [specific-value-continue-eval/t+
      (-> env? continuation-expr? type+? any/c type+?)]
     [non-fexpr-continue-eval/t+
@@ -725,23 +725,31 @@
        "unrecognized expression"
        "expr" expr)]))
 
-; Given unevaluated arguments, performs a Racket-like procedure call
-; behavor, which first evaluates the arguments. This is a fallback for
-; when a value that's called like an fexpr turns out to be a general
-; Racket value rather than an Fexpress `fexpr?`.
+; (Makes fexpr calls, namely to an assumed non-fexpr value.) Returns a
+; positive type for the potential values which result from
+; transforming the given positive type and the given function (for
+; getting the value of that type) according to a *procedure* call with
+; the evaluated forms of the given arguments, followed by the series
+; of additional steps and the target negative type listed in the given
+; continuation expression.
+;
+; There are many `...-continue-eval/t+` and `...-apply/t+` operations
+; in Fexpress, and this is the one to call when a type's potential
+; values are assumed not to be fexprs and yet they're definitely being
+; invoked with an fexpr call. This is called either when a value turns
+; out to be a non-fexpr at run time or when it's assumed to be a
+; non-fexpr using `non-fexpr-value/t+`.
 ;
 ; Contract:
-; (-> env? continuation-expr? type+? type+? any/c type+?)
+; (-> env? continuation-expr? type+? (-> any/c) any/c type+?)
 ;
-; The `val-to-eval/t+` type will only be used for its `type+-eval`
-; behavior. The `val-to-compile/t+` type will only be used for its
-; `type+-compile` behavior. These can be the same type.
+; The given `op/t+` type should be a type which evaluates to the
+; result of `get-op`.
 ;
 ; In typical code, the `args` to an fexpr call are usually a proper
 ; list. This operation raises an error if they're not.
 ;
-(define (unknown-non-fexpr-apply/t+
-          env cont val-to-eval/t+ val-to-compile/t+ args)
+(define (unknown-non-fexpr-apply/t+ env cont op/t+ get-op args)
   (unless (list? args)
     (error "found an improper list of arguments when processing a procedure call"))
   (define arg-type+-list
@@ -757,12 +765,11 @@
     ;
     (lazy-value/t+
       (lambda ()
-        (apply (type+-eval val-to-eval/t+)
+        (apply (get-op)
           (for/list ([arg/t+ (in-list arg-type+-list)])
             (type+-eval arg/t+))))
       (lambda ()
-        (define op-compilation-result
-          (type+-compile val-to-compile/t+))
+        (define op-compilation-result (type+-compile op/t+))
         (define arg-compilation-results
           (for/list ([arg/t+ (in-list arg-type+-list)])
             (type+-compile arg/t+)))
@@ -827,7 +834,7 @@
                         (procedure-arity-includes? val (length args)))
              (error "Wrong number of arguments to a procedure"))
            (unknown-non-fexpr-apply/t+
-             env cont (specific-value/t+ val) val/t+ args)]
+             env cont val/t+ (lambda () val) args)]
           [#t (error "Uncallable value")])])]
     [_ (continuation-expr-continue-eval/t+ env cont val/t+)]))
 
@@ -859,7 +866,8 @@
   ; `continuation-expr-continue-eval-value/t+` method.
   (match cont
     [(apply/ce args cont)
-     (unknown-non-fexpr-apply/t+ env cont val/t+ val/t+ args)]
+     (unknown-non-fexpr-apply/t+
+       env cont val/t+ (lambda () (type+-eval val/t+)) args)]
     [_ (continuation-expr-continue-eval/t+ env cont val/t+)]))
 
 

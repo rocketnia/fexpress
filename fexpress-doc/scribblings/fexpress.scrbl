@@ -481,14 +481,16 @@ A @deftech{negative type} in Fexpress essentially acts like an optimization hint
 @defproc[
   (unknown-non-fexpr-apply/t+ [env env?]
                               [cont continuation-expr?]
-                              [val-to-eval/t+ type+?]
-                              [val-to-compile/t+ type+?]
+                              [op/t+ type+?]
+                              [get-op (-> any/c)]
                               [args any/c])
   type+?
 ]{
-  Given unevaluated arguments, performs a Racket-like procedure call behavor, which first evaluates the arguments. This is a fallback for when a value that's called like an @tech{fexpr} turns out to be a general Racket value rather than an Fexpress @racket[fexpr?].
+  (Makes @tech{fexpr} calls, namely to an assumed non-fexpr value.) Returns a @tech{positive type} for the potential values which result from transforming the given positive type and the given function (for getting the value of that type) according to a @emph{procedure} call with the evaluated forms of the given arguments, followed by the series of additional steps and the target negative type listed in the given continuation expression.
+
+  There are many @tt{...-continue-eval/t+} and @tt{...-apply/t+} operations in Fexpress, and this is the one to call when a type's potential values are assumed not to be fexprs and yet they're definitely being invoked with an fexpr call. This is called either when a value turns out to be a non-fexpr at run time or when it's assumed to be a non-fexpr using @racket[non-fexpr-value/t+].
   
-  The @racket[val-to-eval/t+] type will only be used for its @racket[type+-eval] behavior. The @racket[val-to-compile/t+] type will only be used for its @racket[type+-compile] behavior. These can be the same type.
+  The given @racket[op/t+] type should be a type which evaluates to the result of @racket[get-op].
   
   In typical code, the @racket[args] to an fexpr call are usually a proper list. This operation raises an error if they're not.
 }
