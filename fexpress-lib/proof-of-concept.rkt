@@ -48,15 +48,15 @@
   gen:fexpr
   (contract-out
     [fexpr? (-> any/c boolean?)]
-    [fexpr-continue-eval/t+
-     (-> env? continuation-expr? type+? fexpr? type+?)])
+    [fexpr-apply/t+
+     (-> env? continuation-expr? type+? fexpr? any/c type+?)])
   ; NOTE: Instead of exporting this as a struct, we export only the
   ; constructor.
   #;
   (struct-out makeshift-fexpr)
   (contract-out
     [makeshift-fexpr
-     (-> (-> env? continuation-expr? type+? type+?) fexpr?)])
+     (-> (-> env? continuation-expr? type+? any/c type+?) fexpr?)])
   gen:continuation-expr
   (contract-out
     [continuation-expr? (-> any/c boolean?)]
@@ -231,24 +231,23 @@
 
   ; (Calls fexprs, namely this one.) Returns a positive type for the
   ; potential values which result from transforming the given positive
-  ; type and the given value (this fexpr) of that type according to
-  ; the series of steps and the target negative type listed in the
-  ; given continuation expression.
+  ; type and the given value (this fexpr) of that type according to an
+  ; fexpr call with the given arguments followed by the series of
+  ; additional steps and the target negative type listed in the given
+  ; continuation expression.
   ;
-  ; There are many `...-continue-eval/t+` operations in Fexpress, and
-  ; this is the one to call when the actual *value* of the original
-  ; type is known and is definitely an fexpr. The fexpr can implement
-  ; its own operation-specific behavior here, or it can dispatch again
-  ; to `continuation-expr-continue-eval/t+` to handle a continuation
-  ; expression it doesn't know how to interpret itself.
+  ; There are many `...-continue-eval/t+` and `...-apply/t+`
+  ; operations in Fexpress, and this is the one to call when the
+  ; actual *value* of the original type is known and is definitely an
+  ; fexpr that is definitely being invoked.
   ;
   ; Contract:
-  ; (-> env? continuation-expr? type+? fexpr? type+?)
+  ; (-> env? continuation-expr? type+? fexpr? any/c type+?)
   ;
   ; The given positive type should evaluate to a value that is this
   ; fexpr.
   ;
-  (fexpr-continue-eval/t+ env cont fexpr/t+ fexpr))
+  (fexpr-apply/t+ env cont fexpr/t+ fexpr args))
 
 ; An fexpr. This way of creating an fexpr is good for when it isn't
 ; necessary to give the fexpr other structure type properties. Where
@@ -258,11 +257,11 @@
 ; Field contract:
 ; (-> env? continuation-expr? type+? type+?)
 ;
-(struct makeshift-fexpr (continue-eval/t+) #:transparent
+(struct makeshift-fexpr (apply/t+) #:transparent
   #:methods gen:fexpr
-  [(define (fexpr-continue-eval/t+ env cont op/t+ op)
-     (match-define (makeshift-fexpr continue-eval/t+) op)
-     (continue-eval/t+ env cont op/t+))]
+  [(define (fexpr-apply/t+ env cont op/t+ op args)
+     (match-define (makeshift-fexpr apply/t+) op)
+     (apply/t+ env cont op/t+ args))]
   #:property prop:procedure
   (lambda (fexpr . args)
     (error "attempted to call an Fexpress fexpr from Racket code, which is not supported")))
@@ -811,13 +810,13 @@
 ; value `val`.
 ;
 (define (specific-value-continue-eval/t+ env cont val/t+ val)
-  (cond
-    [(fexpr? val) (fexpr-continue-eval/t+ env cont val/t+ val)]
-    [#t
-     ; TODO CLEANUP: Consider moving this branch to a
-     ; `continuation-expr-continue-eval-value/t+` method.
-     (match cont
-       [(apply/ce args cont)
+  ; TODO CLEANUP: Consider moving this branch to a
+  ; `continuation-expr-continue-eval-value/t+` method.
+  (match cont
+    [(apply/ce args cont)
+     (cond
+       [(fexpr? val) (fexpr-apply/t+ env cont val/t+ val args)]
+       [#t
         (cond
           [(procedure? val)
            (unless (and (list? args)
@@ -825,8 +824,8 @@
              (error "Wrong number of arguments to a procedure"))
            (unknown-non-fexpr-apply/t+
              env cont (specific-value/t+ val) val/t+ args)]
-          [#t (error "Uncallable value")])]
-       [_ (continuation-expr-continue-eval/t+ env cont val/t+)])]))
+          [#t (error "Uncallable value")])])]
+    [_ (continuation-expr-continue-eval/t+ env cont val/t+)]))
 
 ; -----
 ; NOTE COUPLING: Above this point, several things are mutually
@@ -923,36 +922,31 @@
 ;
 (define fexpress-ilambda
   (makeshift-fexpr
-    #;continue-eval/t+
-    (lambda (env cont op/t+)
-      ; TODO CLEANUP: Consider moving this branch to methods on the
-      ; `gen:continuation-expr` generic interface.
-      (match cont
-        [(apply/ce args cont)
-         (match-define (parsed-lambda-args n arg-vars body)
-           (parse-lambda-args 'ilambda args))
-         (type+-continue-eval/t+ env cont
-           (specific-value/t+
-             (lambda arg-values
-               (define received-n (length arg-values))
-               (unless (equal? n received-n)
-                 (raise-arguments-error 'ilambda
-                   "wrong number of arguments at call time"
-                   "number expected" n
-                   "number received" received-n
-                   "arguments expected" arg-vars
-                   "arguments received" arg-values))
-               (define body-env
-                 (for/fold ([env env])
-                           ([arg-var (in-list arg-vars)]
-                            [arg-value (in-list arg-values)])
-                   (hash-set env arg-var
-                     (at-variable/t+ arg-var
-                       (specific-value/t+ arg-value)))))
-               (type+-eval
-                 (fexpress-eval/t+ body-env (done/ce (any-value/t_))
-                                   body)))))]
-        [_ (continuation-expr-continue-eval/t+ env cont op/t+)]))))
+    #;apply/t+
+    (lambda (env cont op/t+ args)
+      (match-define (parsed-lambda-args n arg-vars body)
+        (parse-lambda-args 'ilambda args))
+      (type+-continue-eval/t+ env cont
+        (specific-value/t+
+          (lambda arg-values
+            (define received-n (length arg-values))
+            (unless (equal? n received-n)
+              (raise-arguments-error 'ilambda
+                "wrong number of arguments at call time"
+                "number expected" n
+                "number received" received-n
+                "arguments expected" arg-vars
+                "arguments received" arg-values))
+            (define body-env
+              (for/fold ([env env])
+                        ([arg-var (in-list arg-vars)]
+                         [arg-value (in-list arg-values)])
+                (hash-set env arg-var
+                  (at-variable/t+ arg-var
+                    (specific-value/t+ arg-value)))))
+            (type+-eval
+              (fexpress-eval/t+ body-env (done/ce (any-value/t_))
+                                body))))))))
 
 ; (A helper for `fexpress-clambda`.)
 ;
@@ -1034,26 +1028,21 @@
 ;
 (define fexpress-clambda
   (makeshift-fexpr
-    #;continue-eval/t+
-    (lambda (env cont op/t+)
-      ; TODO CLEANUP: Consider moving this branch to methods on the
-      ; `gen:continuation-expr` generic interface.
-      (match cont
-        [(apply/ce args cont)
-         (define compiled-clambda (compile-clambda env cont args))
-         (type+-continue-eval/t+ env cont
+    #;apply/t+
+    (lambda (env cont op/t+ args)
+      (define compiled-clambda (compile-clambda env cont args))
+      (type+-continue-eval/t+ env cont
 
-           ; TODO LAZY: Rather than just using `lazy-value/t+` here,
-           ; we could also specialize `type+-continue-eval/t+` to
-           ; treat a `clambda` as being guaranteed not to return an
-           ; fexpr. That could let us use them in functional position
-           ; without inhibiting compilation.
-           ;
-           (lazy-value/t+
-             (lambda ()
-               (compilation-result-eval env compiled-clambda))
-             (const compiled-clambda)))]
-        [_ (continuation-expr-continue-eval/t+ env cont op/t+)]))))
+        ; TODO LAZY: Rather than just using `lazy-value/t+` here, we
+        ; could also specialize `type+-continue-eval/t+` to treat a
+        ; `clambda` as being guaranteed not to return an fexpr. That
+        ; could let us use them in functional position without
+        ; inhibiting compilation.
+        ;
+        (lazy-value/t+
+          (lambda ()
+            (compilation-result-eval env compiled-clambda))
+          (const compiled-clambda))))))
 
 
 
@@ -1068,21 +1057,16 @@
 ;
 (define fexpress-the
   (makeshift-fexpr
-    #;continue-eval/t+
-    (lambda (env cont op/t+)
-      ; TODO CLEANUP: Consider moving this branch to methods on the
-      ; `gen:continuation-expr` generic interface.
-      (match cont
-        [(apply/ce args cont)
-         (match args
-           [`(,expr/t_ ,expr)
-            (unless (type_? expr/t_)
-              (error "the: expected the type to be a negative type value, syntactically, and not merely an expression that evaluated to one"))
-            (type+-continue-eval/t+ env cont
-              (fexpress-eval/t+ env (done/ce expr/t_) expr))]
-           [_
-            (error "the: expected a literal negative type and an expression")])]
-        [_ (continuation-expr-continue-eval/t+ env cont op/t+)]))))
+    #;apply/t+
+    (lambda (env cont op/t+ args)
+      (match args
+        [`(,expr/t_ ,expr)
+         (unless (type_? expr/t_)
+           (error "the: expected the type to be a negative type value, syntactically, and not merely an expression that evaluated to one"))
+         (type+-continue-eval/t+ env cont
+           (fexpress-eval/t+ env (done/ce expr/t_) expr))]
+        [_
+         (error "the: expected a literal negative type and an expression")]))))
 
 
 

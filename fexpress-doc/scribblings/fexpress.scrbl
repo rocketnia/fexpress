@@ -159,31 +159,30 @@ There are also @tech{positive type} values, which are types that can perform som
 }
 
 @defthing[gen:fexpr any/c]{
-  A generic interface for Fexpress @tech{fexprs}, which must implement the method @racket[fexpr-continue-eval/t+].
+  A generic interface for Fexpress @tech{fexprs}, which must implement the method @racket[fexpr-apply/t+].
 }
 
 @defproc[
-  (fexpr-continue-eval/t+ [env env?]
-                          [cont continuation-expr?]
-                          [val/t+ type+?]
-                          [val fexpr?])
+  (fexpr-apply/t+ [env env?]
+                  [cont continuation-expr?]
+                  [val/t+ type+?]
+                  [val fexpr?]
+                  [args any/c])
   type+?
 ]{
-  (Calls @tech{fexprs}, namely the given one.) Returns a @tech{positive type} for the potential values which result from transforming the given positive type and the given value (an @racket[fexpr?]) of that type according to the series of steps and the target @tech{negative type} listed in the given @tech{continuation expression}.
+  (Calls @tech{fexprs}, namely the given one.) Returns a @tech{positive type} for the potential values which result from transforming the given positive type and the given value (an @racket[fexpr?]) of that type according to an fexpr call with the given arguments followed by the series of steps and the target @tech{negative type} listed in the given @tech{continuation expression}.
   
-  There are many @tt{...-continue-eval/t+} operations in Fexpress, and this is the one to call when the actual @emph{value} of the original type is known and is definitely an fexpr. The fexpr can implement its own operation-specific behavior here, or it can delegate again to @racket[continuation-expr-continue-eval/t+] to handle a non-@racket[apply/ce] continuation expression it doesn't know how to interpret itself.
-  
-  Every fexpr is expected to do something specific for an @racket[apply/ce] continuation expression. If an fexpr merely delegates to @racket[continuation-expr-continue-eval/t+] for that, there will be an infinite loop as the delegation bounces back and forth.
+  There are many @tt{...-continue-eval/t+} and @tt{...-apply/t+} operations in Fexpress, and this is the one to call when the actual @emph{value} of the original type is known and is definitely an fexpr that is definitely being invoked.
   
   The given @racket[val/t+] type should be a type which evaluates to the value @racket[val].
 }
 
 @defproc[
-  (makeshift-fexpr [continue-eval/t+
-                    (-> env? continuation-expr? type+? type+?)])
+  (makeshift-fexpr [apply/t+
+                    (-> env? continuation-expr? type+? any/c type+?)])
   fexpr?
 ]{
-  Returns an @tech{fexpr} that has the given behavior for @racket[fexpr-continue-eval/t+].
+  Returns an @tech{fexpr} that has the given behavior for @racket[fexpr-apply/t+].
   
   This may be more convenient than defining an instance of @racket[gen:fexpr].
 }
