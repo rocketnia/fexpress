@@ -229,12 +229,12 @@
 ;
 (define-generics fexpr
 
-  ; (Calls fexprs, namely this one.) Returns a positive type for the
-  ; potential values which result from transforming the given positive
-  ; type and the given value (this fexpr) of that type according to an
-  ; fexpr call with the given arguments followed by the series of
-  ; additional steps and the target negative type listed in the given
-  ; continuation expression.
+  ; (Makes fexpr calls, namely to this one.) Returns a positive type
+  ; for the potential values which result from transforming the given
+  ; positive type and the given value (this fexpr) of that type
+  ; according to an fexpr call with the given arguments followed by
+  ; the series of additional steps and the target negative type listed
+  ; in the given continuation expression.
   ;
   ; There are many `...-continue-eval/t+` and `...-apply/t+`
   ; operations in Fexpress, and this is the one to call when the
@@ -277,21 +277,22 @@
 ;
 (define-generics continuation-expr
 
-  ; (Calls fexprs.) Assuming the given positive type will have no
+  ; (Makes fexpr calls.) Assuming the given positive type will have no
   ; known fexpr-calling behavior until we witness its potential
   ; values, returns another positive type for the potential values
   ; which result from transforming those according to the series of
   ; steps and the target negative type listed in the given
   ; continuation expression.
   ;
-  ; There are many `...-continue-eval/t+` operations in Fexpress, and
-  ; this is the one to call when the positive type's fexpr-calling
-  ; behavior should be ignored but its values' fexpr-calling behavior,
-  ; if any, should not be ignored. This will usually result in code
-  ; that consults the value at run time and makes fexpr calls to it
-  ; dynamically. A positive type usually dispatches to this itself
-  ; when its `type+-continue-eval/t+` behavior has no better idea for
-  ; what to do.
+  ; There are many `...-continue-eval/t+` and `...-apply/t+`
+  ; operations in Fexpress, and this is the one to call when the
+  ; positive type's fexpr-calling behavior should be ignored but its
+  ; values' fexpr-calling behavior, if any, should not be ignored.
+  ; This will usually result in code that consults the value at run
+  ; time and makes fexpr calls to it dynamically. A positive type
+  ; usually dispatches to this itself when its
+  ; `type+-continue-eval/t+` behavior has no better idea for what to
+  ; do.
   ;
   ; Contract:
   ; (-> env? continuation-expr? type+? type+?)
@@ -330,13 +331,14 @@
   ;
   (at-variable/t+ var type+)
 
-  ; (Calls fexprs.) Returns a positive type for the potential values
-  ; which result from transforming this type according to a series of
-  ; steps and a target negative type listed in the given continuation
-  ; expression.
+  ; (Makes fexpr calls.) Returns a positive type for the potential
+  ; values which result from transforming this type according to a
+  ; series of steps and a target negative type listed in the given
+  ; continuation expression.
   ;
-  ; There are many `...-continue-eval/t+` operations in Fexpress, and
-  ; this is the most general one; it dispatches to the others.
+  ; There are many `...-continue-eval/t+` and `...-apply/t+`
+  ; operations in Fexpress, and this is the most general one; it
+  ; dispatches to the others.
   ;
   ; Contract:
   ; (-> env? continuation-expr? type+? type+?)
@@ -789,19 +791,21 @@
                    (cons compiled-arg rev-compiled-args)
                    arg-compilation-results)]))))))
 
-; (Calls fexprs.) Returns a positive type for the potential values
-; which result from transforming the given positive type and the given
-; value of that type according to the series of steps and the target
-; negative type listed in the given continuation expression.
+; (Makes fexpr calls.) Returns a positive type for the potential
+; values which result from transforming the given positive type and
+; the given value of that type according to the series of steps and
+; the target negative type listed in the given continuation
+; expression.
 ;
-; There are many `...-continue-eval/t+` operations in Fexpress, and
-; this is the one to call when the actual *value* being called is
-; known and can potentially be an fexpr with its own idea of how to
-; proceed. A positive type processing a `type+-continue-eval/t+` call
-; usually dispatches to this itself when the type's value is known at
-; compile time, and a continuation expression processing a
-; `continuation-expr-continue-eval/t+` call usually dispatches to this
-; itself once the value is finally known at run time.
+; There are many `...-continue-eval/t+` and `...-apply/t+` operations
+; in Fexpress, and this is the one to call when the actual *value*
+; being called is known and can potentially be an fexpr with its own
+; idea of how to proceed. A positive type processing a
+; `type+-continue-eval/t+` call usually dispatches to this itself when
+; the type's value is known at compile time, and a continuation
+; expression processing a `continuation-expr-continue-eval/t+` call
+; usually dispatches to this itself once the value is finally known at
+; run time.
 ;
 ; Contract:
 ; (-> env? continuation-expr? type+? any/c type+?)
@@ -833,19 +837,19 @@
 ; for more details.
 ; -----
 
-; (Calls fexprs.) Assuming the given positive type and its values have
-; no custom fexpr-calling behavior, returns a positive type for the
-; potential values which result from transforming the given one
+; (Makes fexpr calls.) Assuming the given positive type and its values
+; have no custom fexpr-calling behavior, returns a positive type for
+; the potential values which result from transforming the given one
 ; according to the series of steps and the target negative type listed
 ; in the given continuation expression.
 ;
-; There are many `...-continue-eval/t+` operations in Fexpress, and
-; this is the one to call when the positive type *and* its values
-; should have their custom fexpr-calling behavior ignored. Fexpress
-; doesn't usually ignore values' fexpr-calling behavior like this, but
-; since this can lead to better performance, it can be explicitly
-; requested by using `(the ...)` to ascribe a type that uses
-; `non-fexpr-value/t+`.
+; There are many `...-continue-eval/t+` and `...-apply/t+` operations
+; in Fexpress, and this is the one to call when the positive type
+; *and* its values should have their custom fexpr-calling behavior
+; ignored. Fexpress doesn't usually ignore values' fexpr-calling
+; behavior like this, but since this can lead to better performance,
+; it can be explicitly requested by using `(the ...)` to ascribe a
+; type that uses `non-fexpr-value/t+`.
 ;
 ; Contract:
 ; (-> env? continuation-expr? type+? type+?)

@@ -170,7 +170,7 @@ There are also @tech{positive type} values, which are types that can perform som
                   [args any/c])
   type+?
 ]{
-  (Calls @tech{fexprs}, namely the given one.) Returns a @tech{positive type} for the potential values which result from transforming the given positive type and the given value (an @racket[fexpr?]) of that type according to an fexpr call with the given arguments followed by the series of steps and the target @tech{negative type} listed in the given @tech{continuation expression}.
+  (Makes @tech{fexpr} calls, namely to the given one.) Returns a @tech{positive type} for the potential values which result from transforming the given positive type and the given value (an @racket[fexpr?]) of that type according to an fexpr call with the given arguments followed by the series of steps and the target @tech{negative type} listed in the given @tech{continuation expression}.
   
   There are many @tt{...-continue-eval/t+} and @tt{...-apply/t+} operations in Fexpress, and this is the one to call when the actual @emph{value} of the original type is known and is definitely an fexpr that is definitely being invoked.
   
@@ -310,9 +310,9 @@ Usually, this is a series of pending @tech{fexpr} applications (@racket[apply/ce
                                       [val/t+ type+?])
   type+?
 ]{
-  (Calls @tech{fexprs}.) Assuming the given @tech{positive type} will have no known fexpr-calling behavior until we witness its potential values, returns another positive type for the potential values which result from transforming those according to the series of steps and the target @tech{negative type} listed in the given @tech{continuation expression}.
+  (Makes @tech{fexpr} calls.) Assuming the given @tech{positive type} will have no known fexpr-calling behavior until we witness its potential values, returns another positive type for the potential values which result from transforming those according to the series of steps and the target @tech{negative type} listed in the given @tech{continuation expression}.
   
-  There are many @tt{...-continue-eval/t+} operations in Fexpress, and this is the one to call when the positive type's fexpr-calling behavior should be ignored but its values' fexpr-calling behavior, if any, should not be ignored. This will usually result in code that consults the value at run time and makes fexpr calls to it dynamically. A positive type usually dispatches to this itself when its @racket[type+-continue-eval/t+] behavior has no better idea for what to do.
+  There are many @tt{...-continue-eval/t+} and @tt{...-apply/t+} operations in Fexpress, and this is the one to call when the positive type's fexpr-calling behavior should be ignored but its values' fexpr-calling behavior, if any, should not be ignored. This will usually result in code that consults the value at run time and makes fexpr calls to it dynamically. A positive type usually dispatches to this itself when its @racket[type+-continue-eval/t+] behavior has no better idea for what to do.
 }
 
 
@@ -378,9 +378,9 @@ The type system in the Fexpress proof of concept exists only for the purpose of 
                           [type+ type+?])
   type+?
 ]{
-  (Calls @tech{fexprs}.) Returns a @tech{positive type} for the potential values which result from transforming the given @tech{positive type} according to a series of steps and a target @tech{negative type} listed in the given continuation expression.
+  (Makes @tech{fexpr} calls.) Returns a @tech{positive type} for the potential values which result from transforming the given @tech{positive type} according to a series of steps and a target @tech{negative type} listed in the given continuation expression.
   
-  There are many @tt{...-continue-eval/t+} operations in Fexpress, and this is the most general one; it dispatches to the others.
+  There are many @tt{...-continue-eval/t+} and @tt{...-apply/t+} operations in Fexpress, and this is the most general one; it dispatches to the others.
 }
 
 @defproc[
@@ -500,9 +500,9 @@ A @deftech{negative type} in Fexpress essentially acts like an optimization hint
                                    [val any/c])
   type+?
 ]{
-  (Calls @tech{fexprs}.) Returns a @tech{positive type} for the potential values which result from transforming the given positive type and the given value of that type according to the series of steps and the target @tech{negative type} listed in the given @tech{continuation expression}.
+  (Makes @tech{fexpr} calls.) Returns a @tech{positive type} for the potential values which result from transforming the given positive type and the given value of that type according to the series of steps and the target @tech{negative type} listed in the given @tech{continuation expression}.
   
-  There are many @tt{...-continue-eval/t+} operations in Fexpress, and this is the one to call when the actual @emph{value} being called is known and can potentially be an fexpr with its own idea of how to proceed. A positive type processing a @racket[type+-continue-eval/t+] call usually dispatches to this itself when the type's value is known at compile time, and a continuation expression processing a @racket[continuation-expr-continue-eval/t+] call usually dispatches to this itself once the value is finally known at run time.
+  There are many @tt{...-continue-eval/t+} and @tt{...-apply/t+} operations in Fexpress, and this is the one to call when the actual @emph{value} being called is known and can potentially be an fexpr with its own idea of how to proceed. A positive type processing a @racket[type+-continue-eval/t+] call usually dispatches to this itself when the type's value is known at compile time, and a continuation expression processing a @racket[continuation-expr-continue-eval/t+] call usually dispatches to this itself once the value is finally known at run time.
   
   The given @racket[val/t+] type should be a type which evaluates to the value @racket[val].
 }
@@ -513,9 +513,9 @@ A @deftech{negative type} in Fexpress essentially acts like an optimization hint
                               [val/t+ type+?])
   type+?
 ]{
-  (Calls @tech{fexprs}.) Assuming the given @tech{positive type} and its values have no custom fexpr-calling behavior, returns a positive type for the potential values which result from transforming the given one according to the series of steps and the target @tech{negative type} listed in the given @tech{continuation expression}.
+  (Makes @tech{fexpr} calls.) Assuming the given @tech{positive type} and its values have no custom fexpr-calling behavior, returns a positive type for the potential values which result from transforming the given one according to the series of steps and the target @tech{negative type} listed in the given @tech{continuation expression}.
   
-  There are many @tt{...-continue-eval/t+} operations in Fexpress, and this is the one to call when the positive type @emph{and} its values should have their custom fexpr-calling behavior ignored. Fexpress doesn't usually ignore values' fexpr-calling behavior like this, but since this can lead to better performance, it can be explicitly requested by using @racket[(fexpress-the _...)] to ascribe a type that uses @racket[non-fexpr-value/t+].
+  There are many @tt{...-continue-eval/t+} and @tt{...-apply/t+} operations in Fexpress, and this is the one to call when the positive type @emph{and} its values should have their custom fexpr-calling behavior ignored. Fexpress doesn't usually ignore values' fexpr-calling behavior like this, but since this can lead to better performance, it can be explicitly requested by using @racket[(fexpress-the _...)] to ascribe a type that uses @racket[non-fexpr-value/t+].
 }
 
 
