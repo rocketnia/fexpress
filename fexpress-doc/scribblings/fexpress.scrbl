@@ -171,7 +171,9 @@ There are also @tech{positive type} values, which are types that can perform som
 ]{
   (Calls @tech{fexprs}, namely the given one.) Returns a @tech{positive type} for the potential values which result from transforming the given positive type and the given value (an @racket[fexpr?]) of that type according to the series of steps and the target @tech{negative type} listed in the given @tech{continuation expression}.
   
-  There are many @tt{...-continue-eval/t+} operations in Fexpress, and this is the one to call when the actual @emph{value} of the original type is known and is definitely an fexpr. The fexpr can implement its own operation-specific behavior here, or it can dispatch again to @racket[continuation-expr-continue-eval/t+] to handle a continuation expression it doesn't know how to interpret itself.
+  There are many @tt{...-continue-eval/t+} operations in Fexpress, and this is the one to call when the actual @emph{value} of the original type is known and is definitely an fexpr. The fexpr can implement its own operation-specific behavior here, or it can delegate again to @racket[continuation-expr-continue-eval/t+] to handle a non-@racket[apply/ce] continuation expression it doesn't know how to interpret itself.
+  
+  Every fexpr is expected to do something specific for an @racket[apply/ce] continuation expression. If an fexpr merely delegates to @racket[continuation-expr-continue-eval/t+] for that, there will be an infinite loop as the delegation bounces back and forth.
   
   The given @racket[val/t+] type should be a type which evaluates to the value @racket[val].
 }
