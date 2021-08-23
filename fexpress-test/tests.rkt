@@ -21,7 +21,6 @@
 
 (require (only-in data/queue enqueue! make-queue queue->list))
 (require (only-in racket/match match-define))
-
 (require (only-in rackunit check-equal?))
 
 (require fexpress/proof-of-concept)
