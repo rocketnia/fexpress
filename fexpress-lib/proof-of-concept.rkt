@@ -838,12 +838,6 @@
           [#t (error "Uncallable value")])])]
     [_ (continuation-expr-continue-eval/t+ env cont val/t+)]))
 
-; -----
-; NOTE COUPLING: Above this point, several things are mutually
-; recursive. See the other NOTE COUPLING to see where this starts and
-; for more details.
-; -----
-
 ; (Makes fexpr calls.) Assuming the given positive type and its values
 ; have no custom fexpr-calling behavior, returns a positive type for
 ; the potential values which result from transforming the given one
