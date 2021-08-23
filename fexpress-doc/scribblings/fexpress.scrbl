@@ -312,7 +312,7 @@ Usually, this is a series of pending @tech{fexpr} applications (@racket[apply/ce
 ]{
   (Makes @tech{fexpr} calls.) Assuming the given @tech{positive type} will have no known fexpr-calling behavior until we witness its potential values, returns another positive type for the potential values which result from transforming those according to the series of steps and the target @tech{negative type} listed in the given @tech{continuation expression}.
   
-  There are many @tt{...-continue-eval/t+} and @tt{...-apply/t+} operations in Fexpress, and this is the one to call when the positive type's fexpr-calling behavior should be ignored but its values' fexpr-calling behavior, if any, should not be ignored. This will usually result in code that consults the value at run time and makes fexpr calls to it dynamically. A positive type usually dispatches to this itself when its @racket[type+-continue-eval/t+] behavior has no better idea for what to do.
+  There are many @tt{...-continue-eval/t+} and @tt{...-apply/t+} operations in Fexpress, and this is the one to call when the positive type's fexpr-calling behavior should be ignored but its values' fexpr-calling behavior, if any, should not be ignored. This will usually result in code that consults the value at run time and makes fexpr calls to it dynamically. A positive type usually delegates to this itself when its @racket[type+-continue-eval/t+] behavior has no better idea for what to do.
 }
 
 
@@ -380,7 +380,7 @@ The type system in the Fexpress proof of concept exists only for the purpose of 
 ]{
   (Makes @tech{fexpr} calls.) Returns a @tech{positive type} for the potential values which result from transforming the given @tech{positive type} according to a series of steps and a target @tech{negative type} listed in the given continuation expression.
   
-  There are many @tt{...-continue-eval/t+} and @tt{...-apply/t+} operations in Fexpress, and this is the most general one; it dispatches to the others.
+  There are many @tt{...-continue-eval/t+} and @tt{...-apply/t+} operations in Fexpress, and this is the most general one; it delegates to the others.
 }
 
 @defproc[
@@ -389,7 +389,7 @@ The type system in the Fexpress proof of concept exists only for the purpose of 
 ]{
   Returns a @tech{positive type} with the given implementations of @racket[type+-eval] and @racket[type+-compile]. These should satisfy the algebraic laws described at @racket[gen:type+].
   
-  The resulting type doesn't carry any assumptions about the potential values' @tech{fexpr}-calling behavior. That is to say, its @racket[type+-continue-eval/t+] behavior only gives up and dispatches to @racket[continuation-expr-continue-eval/t+].
+  The resulting type doesn't carry any assumptions about the potential values' @tech{fexpr}-calling behavior. That is to say, its @racket[type+-continue-eval/t+] behavior only gives up and delegates to @racket[continuation-expr-continue-eval/t+].
 }
 
 
@@ -504,7 +504,7 @@ A @deftech{negative type} in Fexpress essentially acts like an optimization hint
 ]{
   (Makes @tech{fexpr} calls.) Returns a @tech{positive type} for the potential values which result from transforming the given positive type and the given value of that type according to the series of steps and the target @tech{negative type} listed in the given @tech{continuation expression}.
   
-  There are many @tt{...-continue-eval/t+} and @tt{...-apply/t+} operations in Fexpress, and this is the one to call when the actual @emph{value} being called is known and can potentially be an fexpr with its own idea of how to proceed. A positive type processing a @racket[type+-continue-eval/t+] call usually dispatches to this itself when the type's value is known at compile time, and a continuation expression processing a @racket[continuation-expr-continue-eval/t+] call usually dispatches to this itself once the value is finally known at run time.
+  There are many @tt{...-continue-eval/t+} and @tt{...-apply/t+} operations in Fexpress, and this is the one to call when the actual @emph{value} being called is known and can potentially be an fexpr with its own idea of how to proceed. A positive type processing a @racket[type+-continue-eval/t+] call usually delegates to this itself when the type's value is known at compile time, and a continuation expression processing a @racket[continuation-expr-continue-eval/t+] call usually delegates to this itself once the value is finally known at run time.
   
   The given @racket[val/t+] type should be a type which evaluates to the value @racket[val].
 }

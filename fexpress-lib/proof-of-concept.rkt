@@ -290,9 +290,8 @@
   ; values' fexpr-calling behavior, if any, should not be ignored.
   ; This will usually result in code that consults the value at run
   ; time and makes fexpr calls to it dynamically. A positive type
-  ; usually dispatches to this itself when its
-  ; `type+-continue-eval/t+` behavior has no better idea for what to
-  ; do.
+  ; usually delegates to this itself when its `type+-continue-eval/t+`
+  ; behavior has no better idea for what to do.
   ;
   ; Contract:
   ; (-> env? continuation-expr? type+? type+?)
@@ -338,7 +337,7 @@
   ;
   ; There are many `...-continue-eval/t+` and `...-apply/t+`
   ; operations in Fexpress, and this is the most general one; it
-  ; dispatches to the others.
+  ; delegates to the others.
   ;
   ; Contract:
   ; (-> env? continuation-expr? type+? type+?)
@@ -808,10 +807,10 @@
 ; in Fexpress, and this is the one to call when the actual *value*
 ; being called is known and can potentially be an fexpr with its own
 ; idea of how to proceed. A positive type processing a
-; `type+-continue-eval/t+` call usually dispatches to this itself when
+; `type+-continue-eval/t+` call usually delegates to this itself when
 ; the type's value is known at compile time, and a continuation
 ; expression processing a `continuation-expr-continue-eval/t+` call
-; usually dispatches to this itself once the value is finally known at
+; usually delegates to this itself once the value is finally known at
 ; run time.
 ;
 ; Contract:
