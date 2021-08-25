@@ -89,7 +89,7 @@
          (clambda (x) (* x x)))))
   (list
     '(("Evaluating Racket code:"
-       (lambda (env -funcall -+)
+       (lambda (env -+ -funcall)
          (lambda (-square)
            (#%app -funcall
              (lambda (-double)

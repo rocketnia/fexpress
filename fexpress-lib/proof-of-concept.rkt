@@ -418,7 +418,15 @@
   (match-define
     (compilation-result depends-on-env? free-vars lambda-compiled)
     compiled)
-  (define free-vars-list (hash-keys free-vars))
+
+  ; NOTE: We sort the free variables to make our generated Racket code
+  ; deterministic, since we check that code in tests.
+  ;
+  ; TODO: See if we should use a sorted collection in the first place
+  ; so we don't have to do this.
+  ;
+  (define free-vars-list (sort (hash-keys free-vars) symbol<?))
+
   (define local-free-vars-list
     (for/list ([free-var (in-list free-vars-list)])
       (var-representation-in-racket free-var)))
