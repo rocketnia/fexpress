@@ -8,7 +8,7 @@ jobs:
     strategy:
       matrix:
         racket-variant: ["BC", "CS"]
-        racket-version: ["8.0", "stable", "current"]
+        racket-version: ["8.3", "stable", "current"]
         include:
           - package: fexpress
     steps:
@@ -26,15 +26,18 @@ jobs:
       # automatically fetch all the dependencies. We don't build the
       # docs yet; we'll do that later when we're recompiling the
       # project to check its dependencies.
+      #
+      # The order in which we install these packages matters; if we
+      # install a package before one it depends on, the command will
+      # fetch a stale copy of the dependency from the Racket package
+      # index.
+      #
       - name: Install `${{ matrix.package }}-lib` and its dependencies
         run: raco pkg install --auto --no-docs --batch --link "./${{ matrix.package }}-lib/"
       - name: Install `${{ matrix.package }}-doc` and its dependencies
         run: raco pkg install --auto --no-docs --batch --link "./${{ matrix.package }}-doc/"
       - name: Install `${{ matrix.package }}-test` and its dependencies
         run: raco pkg install --auto --no-docs --batch --link "./${{ matrix.package }}-test/"
-      # The main package must be installed after the `...-doc` and
-      # `...-test` packages. Otherwise, it'll install stale copies of
-      # them from from the Racket package index.
       - name: Install `${{ matrix.package }}` and its dependencies
         run: raco pkg install --auto --no-docs --batch --link "./${{ matrix.package }}/"
 
