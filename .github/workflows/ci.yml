@@ -3,25 +3,81 @@ name: CI
 on: [push, pull_request]
 
 jobs:
+  vars:
+    runs-on: ubuntu-latest
+    outputs:
+      package: fexpress
+    steps:
+      - name: Initialize variables
+        run: "true"
   test:
+    needs: vars
     runs-on: ubuntu-latest
     strategy:
       matrix:
         racket-variant: ["BC", "CS"]
         racket-version: ["8.3", "stable", "current"]
+        racket-catalogs-id: ["pkgs"]
+        racket-catalogs: [""]
         include:
-          - package: fexpress
+          # We build once against racksnaps (https://racksnaps.defn.io/)
+          # so that it's easier to track down working dependency
+          # versions. This is essentially our package-lock.json or
+          # Cargo.lock information.
+          #
+          - racket-variant: "CS"
+            racket-version: "8.3"
+            racket-catalogs-id: "racksnaps"
+            racket-catalogs: |
+              https://download.racket-lang.org/releases/8.3/catalog/,
+              https://racksnaps.defn.io/built-snapshots/2022/01/23/catalog/
     steps:
       - name: Checkout
         uses: actions/checkout@v2
+      
       - name: Install Racket '${{ matrix.racket-version }}'
-        uses: Bogdanp/setup-racket@v1.1
+        uses: Bogdanp/setup-racket@v1.7
         with:
           architecture: x64
           distribution: full
           variant: ${{ matrix.racket-variant }}
           version: ${{ matrix.racket-version }}
-
+          catalogs: ${{ matrix.racket-catalogs }}
+          
+          # This is based on
+          # https://github.com/soegaard/sketching/blob/bc24517203d5cae9019ee18491bb076b7299bbef/.github/workflows/push.yml
+          # and we're using it so that it's possible to set the
+          # catalogs without getting a permission error.
+          dest: '"${HOME}/racketdist"'
+          sudo: never
+      
+      # This is based on
+      # https://github.com/Bogdanp/setup-racket-cache-example
+      - name: Record the Racket version
+        run: racket --version | tee .racket-version
+      - name: Obtain cached Racket packages, if available
+        uses: actions/cache@v2
+        with:
+          path: |
+            ~/.cache/racket
+            ~/.local/share/racket
+          key: "\
+            ${{ runner.os }}-\
+            ${{ hashFiles('.racket-version') }}-\
+            ${{ matrix.racket-catalogs-id }}"
+      
+      # We uninstall the packages if they're already installed. This
+      # can happen if the GitHub Actions cache is already populated with
+      # them.
+      - name: Uninstall `${{ needs.vars.outputs.package }}`
+        run: raco pkg remove --no-docs --batch ${{ needs.vars.outputs.package }} || true
+      - name: Uninstall `${{ needs.vars.outputs.package }}-test`
+        run: raco pkg remove --no-docs --batch ${{ needs.vars.outputs.package }}-test || true
+      - name: Uninstall `${{ needs.vars.outputs.package }}-doc`
+        run: raco pkg remove --no-docs --batch ${{ needs.vars.outputs.package }}-doc || true
+      - name: Uninstall `${{ needs.vars.outputs.package }}-lib`
+        run: raco pkg remove --no-docs --batch ${{ needs.vars.outputs.package }}-lib || true
+      
       # We install each package directory as a linked package, and we
       # automatically fetch all the dependencies. We don't build the
       # docs yet; we'll do that later when we're recompiling the
@@ -33,28 +89,28 @@ jobs:
       # index.
       #
       - name: Install `${{ matrix.package }}-lib` and its dependencies
-        run: raco pkg install --auto --no-docs --batch --link "./${{ matrix.package }}-lib/"
-      - name: Install `${{ matrix.package }}-doc` and its dependencies
-        run: raco pkg install --auto --no-docs --batch --link "./${{ matrix.package }}-doc/"
-      - name: Install `${{ matrix.package }}-test` and its dependencies
-        run: raco pkg install --auto --no-docs --batch --link "./${{ matrix.package }}-test/"
-      - name: Install `${{ matrix.package }}` and its dependencies
-        run: raco pkg install --auto --no-docs --batch --link "./${{ matrix.package }}/"
+        run: raco pkg install --auto --no-docs --batch --link "./${{ needs.vars.outputs.package }}-lib/"
+      - name: Install `${{ needs.vars.outputs.package }}-doc` and its dependencies
+        run: raco pkg install --auto --no-docs --batch --link "./${{ needs.vars.outputs.package }}-doc/"
+      - name: Install `${{ needs.vars.outputs.package }}-test` and its dependencies
+        run: raco pkg install --auto --no-docs --batch --link "./${{ needs.vars.outputs.package }}-test/"
+      - name: Install `${{ needs.vars.outputs.package }}` and its dependencies
+        run: raco pkg install --auto --no-docs --batch --link "./${{ needs.vars.outputs.package }}/"
 
       # We recompile the collection (the single collection which all
       # these packages populate) and check that the package
       # dependencies declared in each info.rkt are correct.
       - name: Recompile to check dependencies, and build documentation
-        run: raco setup --check-pkg-deps --unused-pkg-deps "${{ matrix.package }}"
+        run: raco setup --check-pkg-deps --unused-pkg-deps "${{ needs.vars.outputs.package }}"
 
       # We run tests according to the way the DrDr continuous testing
       # system does. This imitates the settings used by the Racket
       # package index at <https://pkgs.racket-lang.org/>.
-      - name: Test `${{ matrix.package }}-lib`
-        run: raco test --drdr --package "${{ matrix.package }}-lib"
-      - name: Test `${{ matrix.package }}-doc`
-        run: raco test --drdr --package "${{ matrix.package }}-doc"
-      - name: Test `${{ matrix.package }}-test`
-        run: raco test --drdr --package "${{ matrix.package }}-test"
-      - name: Test `${{ matrix.package }}`
-        run: raco test --drdr --package "${{ matrix.package }}"
+      - name: Test `${{ needs.vars.outputs.package }}-lib`
+        run: raco test --drdr --package "${{ needs.vars.outputs.package }}-lib"
+      - name: Test `${{ needs.vars.outputs.package }}-doc`
+        run: raco test --drdr --package "${{ needs.vars.outputs.package }}-doc"
+      - name: Test `${{ needs.vars.outputs.package }}-test`
+        run: raco test --drdr --package "${{ needs.vars.outputs.package }}-test"
+      - name: Test `${{ needs.vars.outputs.package }}`
+        run: raco test --drdr --package "${{ needs.vars.outputs.package }}"
