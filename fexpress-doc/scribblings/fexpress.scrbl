@@ -4,7 +4,7 @@
 @;
 @; Fexpress, a compilation-friendly fexpr language.
 
-@;   Copyright 2021 The Fexpress Authors
+@;   Copyright 2021, 2023 The Fexpress Authors
 @;
 @;   Licensed under the Apache License, Version 2.0 (the "License");
 @;   you may not use this file except in compliance with the License.
@@ -378,7 +378,7 @@ The type system in the Fexpress proof of concept exists only for the purpose of 
                           [type+ type+?])
   type+?
 ]{
-  (Makes @tech{fexpr} calls.) Returns a @tech{positive type} for the potential values which result from transforming the given @tech{positive type} according to a series of steps and a target @tech{negative type} listed in the given continuation expression.
+  (Makes @tech{fexpr} calls.) Returns a @tech{positive type} for the potential values which result from transforming the given @tech{positive type} according to a series of steps and a target @tech{negative type} listed in the given @tech{continuation expression}.
   
   There are many @tt{...-continue-eval/t+} and @tt{...-apply/t+} operations in Fexpress, and this is the most general one; it delegates to the others.
 }
@@ -486,8 +486,8 @@ A @deftech{negative type} in Fexpress essentially acts like an optimization hint
                               [args any/c])
   type+?
 ]{
-  (Makes @tech{fexpr} calls, namely to an assumed non-fexpr value.) Returns a @tech{positive type} for the potential values which result from transforming the given positive type and the given function (for getting the value of that type) according to a @emph{procedure} call with the evaluated forms of the given arguments, followed by the series of additional steps and the target negative type listed in the given continuation expression.
-
+  (Makes @tech{fexpr} calls, namely to an assumed non-fexpr value.) Returns a @tech{positive type} for the potential values which result from transforming the given positive type and the given function (for getting the value of that type) according to a @emph{procedure} call with the evaluated forms of the given arguments, followed by the series of additional steps and the target negative type listed in the given @tech{continuation expression}.
+  
   There are many @tt{...-continue-eval/t+} and @tt{...-apply/t+} operations in Fexpress, and this is the one to call when a type's potential values are assumed not to be fexprs and yet they're definitely being invoked with an fexpr call. This is called either when a value turns out to be a non-fexpr at run time or when it's assumed to be a non-fexpr using @racket[non-fexpr-value/t+].
   
   The given @racket[op/t+] type should be a type which evaluates to the result of @racket[get-op].
