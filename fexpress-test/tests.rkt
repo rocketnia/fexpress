@@ -41,12 +41,13 @@
 
 (define test-env
   (env-of-specific-values
-    (hash 'the fexpress-the
-          'ilambda fexpress-ilambda
-          'clambda fexpress-clambda
-          'funcall (lambda (f . args) (apply f args))
-          '+ +
-          '* *)))
+    (hashalw
+      'the fexpress-the
+      'ilambda fexpress-ilambda
+      'clambda fexpress-clambda
+      'funcall (lambda (f . args) (apply f args))
+      '+ +
+      '* *)))
 
 
 ; NOTE: This example is in the docs.
