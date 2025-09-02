@@ -6,7 +6,7 @@
 ; macro, an Fexpress fexpr, and a procedure depending on how it's
 ; used.
 
-;   Copyright 2021 The Fexpress Authors
+;   Copyright 2021, 2025 The Fexpress Authors
 ;
 ;   Licensed under the Apache License, Version 2.0 (the "License");
 ;   you may not use this file except in compliance with the License.
