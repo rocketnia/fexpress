@@ -9,12 +9,13 @@ Fexprs are well-known to make compilation difficult in the general case. If the 
 ```racket
 > (define test-env
     (env-of-specific-values
-      (hash 'the fexpress-the
-            'ilambda fexpress-ilambda
-            'clambda fexpress-clambda
-            'funcall (lambda (f . args) (apply f args))
-            '+ +
-            '* *)))
+      (hashalw
+        'the fexpress-the
+        'ilambda fexpress-ilambda
+        'clambda fexpress-clambda
+        'funcall (lambda (f . args) (apply f args))
+        '+ +
+        '* *)))
 > (define (logging body)
     (parameterize ([current-fexpress-logger pretty-print])
       (body)))

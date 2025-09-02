@@ -22,9 +22,7 @@
 @(require
    (for-label
      (only-in racket/base
-       + * add1 and apply boolean? define eval exact-integer? hash
-       hash-ref identifier? lambda list map parameterize sqrt
-       symbol?)))
+       + * add1 and apply boolean? define equal-always? eval exact-integer? hashalw hash-ref identifier? lambda list map parameterize sqrt symbol?)))
 @(require
    (for-label
      (only-in racket/contract/base
@@ -86,12 +84,13 @@ The building blocks provided here make the language capable of doing simple lamb
     
     (define _test-env
       (env-of-specific-values
-        (hash 'the fexpress-the
-              'ilambda fexpress-ilambda
-              'clambda fexpress-clambda
-              'funcall (lambda (_f . _args) (apply _f _args))
-              '+ +
-              '* *)))
+        (hashalw
+          'the fexpress-the
+          'ilambda fexpress-ilambda
+          'clambda fexpress-clambda
+          'funcall (lambda (_f . _args) (apply _f _args))
+          '+ +
+          '* *)))
     
     (define (_logging _body)
       (parameterize ([current-fexpress-logger pretty-print])
@@ -453,11 +452,11 @@ A @deftech{negative type} in Fexpress essentially acts like an optimization hint
 }
 
 @defproc[(env? [v any/c]) boolean?]{
-  Returns whether the given value is an Fexpress lexical environment, which is represented by an immutable hash from variable names to @tech{positive types}. Besides being positive types, the values of the hash should also have successful @racket[type+-compile] behavior, and they should be equivalent to @racket[var-compile] for the same Fexpress variable.
+  Returns whether the given value is an Fexpress lexical environment, which is represented by an immutable @racket[equal-always?]-based hash from variable names to @tech{positive types}. Besides being positive types, the values of the hash should also have successful @racket[type+-compile] behavior, and they should be equivalent to @racket[var-compile] for the same Fexpress variable.
 }
 
 @defproc[(free-vars? [v any/c]) boolean?]{
-  Returns whether the given value is an Fexpress free variable set, which is represented by an immutable hash from variable names to @racket[#t].
+  Returns whether the given value is an Fexpress free variable set, which is represented by an immutable @racket[equal-always?]-based hash from variable names to @racket[#t].
 }
 
 @defproc[(env-get/t+ [env env?] [var var?]) type+?]{

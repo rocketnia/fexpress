@@ -113,7 +113,7 @@
            (for/list ([arg/t+ (in-list arg-type+-list)])
              (type+-compile arg/t+)))
          (let next ([depends-on-env? #f]
-                    [free-vars (hash)]
+                    [free-vars (hashalw)]
                     [rev-args-compiled (list)]
                     [arg-compilation-results
                      arg-compilation-results])
@@ -144,10 +144,11 @@
 
 (define test-env
   (env-of-specific-values
-    (hash 'clambda fexpress-clambda
-          'and my-and
-          'get-false (lambda () #f)
-          'err (lambda () (error "Shouldn't have called this")))))
+    (hashalw
+      'clambda fexpress-clambda
+      'and my-and
+      'get-false (lambda () #f)
+      'err (lambda () (error "Shouldn't have called this")))))
 
 
 (check-equal?

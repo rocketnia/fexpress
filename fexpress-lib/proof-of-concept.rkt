@@ -183,27 +183,29 @@
   (and (symbol? v) (symbol-interned? v)))
 
 ; A contract that recognizes Fexpress free variable sets, which are
-; represented by immutable hashes from variable names to `#t`.
+; represented by immutable `equal-always?`-based hashes from variable
+; names to `#t`.
 ;
 ; Contract:
 ; (-> any/c boolean?)
 ;
 (define (free-vars? v)
-  (and (hash? v) (immutable? v)
+  (and (hash? v) (immutable? v) (hash-equal-always? v)
     (for/and ([(k v) (in-hash v)])
-      (and (var? k) (equal? #t v)))))
+      (and (var? k) (equal-always? #t v)))))
 
 ; A contract that recognizes this language's lexical environments,
-; which are represented by immutable hashes from variable names to
-; positive types. Besides being positive types, the values of the hash
-; should also have successful `type+-compile` behavior, and it should
-; be equivalent to `var-compile` for the same Fexpress variable.
+; which are represented by immutable `equal-always?`-based hashes from
+; variable names to positive types. Besides being positive types, the
+; values of the hash should also have successful `type+-compile`
+; behavior, and it should be equivalent to `var-compile` for the same
+; Fexpress variable.
 ;
 ; Contract:
 ; (-> any/c boolean?)
 ;
 (define (env? v)
-  (and (hash? v) (immutable? v)
+  (and (hash? v) (immutable? v) (hash-equal-always? v)
     (for/and ([(k v) (in-hash v)])
       (and (var? k) (type+? v)))))
 
@@ -398,7 +400,7 @@
 ; (-> var? compilation-result?)
 ;
 (define (var-compile var)
-  (compilation-result #f (hash var #t)
+  (compilation-result #f (hashalw var #t)
     (var-representation-in-racket var)))
 
 ; TODO CLEANUP: Consider implementing some `compilation-result` monad
@@ -726,7 +728,7 @@
        (lazy-value/t+
          (const val)
          (const
-           (compilation-result #f (hash) `(,#'#%datum . ,val)))))]
+           (compilation-result #f (hashalw) `(,#'#%datum . ,val)))))]
     [_
      (raise-arguments-error 'fexpress-eval/t+
        "unrecognized expression"
@@ -914,9 +916,10 @@
          "expected the argument list to be a list of symbols"
          "argument list" arg-vars))
      (define n (length arg-vars))
-     (unless (equal? n (hash-count
-                         (for/hash ([arg (in-list arg-vars)])
-                           (values arg #t))))
+     (unless
+       (equal-always? n (hash-count
+                          (for/hashalw ([arg (in-list arg-vars)])
+                            (values arg #t))))
        (raise-arguments-error err-name
          "expected the argument list to be a list of mutually unique symbols"
          "argument list" arg-vars))
@@ -943,7 +946,7 @@
         (specific-value/t+
           (lambda arg-values
             (define received-n (length arg-values))
-            (unless (equal? n received-n)
+            (unless (equal-always? n received-n)
               (raise-arguments-error 'ilambda
                 "wrong number of arguments at call time"
                 "number expected" n
@@ -983,7 +986,7 @@
       ; TODO CLEANUP: Consider moving this branch to methods on the
       ; `gen:continuation-expr` and `gen:type_` generic interfaces.
       [(done/ce (->/t_ arg-type+-list return-val/t_))
-       (unless (equal? n (length arg-type+-list))
+       (unless (equal-always? n (length arg-type+-list))
          (error "Expected the type of a function to have just as many arguments as the argument list of the function"))
        (list
          (for/list ([arg-var (in-list arg-vars)]
@@ -1088,7 +1091,7 @@
 ; Contract:
 ; (-> (hash/c var? any/c) env?)
 (define (env-of-specific-values specific-values)
-  (for/fold ([env (hash)]) ([(var val) (in-hash specific-values)])
+  (for/fold ([env (hashalw)]) ([(var val) (in-hash specific-values)])
     (hash-set env var (at-variable/t+ var (specific-value/t+ val)))))
 
 ; Contract:
