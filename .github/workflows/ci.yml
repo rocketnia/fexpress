@@ -15,11 +15,15 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        racket-variant: ["BC", "CS"]
+        racket-variant: ["CS"]
         racket-version: ["8.3", "stable", "current"]
         racket-catalogs-id: ["pkgs"]
         racket-catalogs: [""]
         include:
+          - racket-variant: "BC"
+            racket-version: "8.3"
+            racket-catalogs-id: "pkgs"
+            racket-catalogs: ""
           # We build once against racksnaps (https://racksnaps.defn.io/)
           # so that it's easier to track down working dependency
           # versions. This is essentially our package-lock.json or
@@ -55,6 +59,10 @@ jobs:
       # https://github.com/Bogdanp/setup-racket-cache-example
       - name: Record the Racket version
         run: racket --version | tee .racket-version
+      - name: Record the Racket catalog URLs
+        run: echo "$SCRIPT_RACKET_CATALOGS" | tee .racket-catalogs
+        env:
+          SCRIPT_RACKET_CATALOGS: ${{ matrix.racket-catalogs }}
       - name: Obtain cached Racket packages, if available
         uses: actions/cache@v4
         with:
@@ -63,8 +71,7 @@ jobs:
             ~/.local/share/racket
           key: "\
             ${{ runner.os }}-\
-            ${{ hashFiles('.racket-version') }}-\
-            ${{ matrix.racket-catalogs-id }}"
+            ${{ hashFiles('.racket-version', '.racket-catalogs') }}"
       
       # We uninstall the packages if they're already installed. This
       # can happen if the GitHub Actions cache is already populated with
@@ -88,7 +95,7 @@ jobs:
       # fetch a stale copy of the dependency from the Racket package
       # index.
       #
-      - name: Install `${{ matrix.package }}-lib` and its dependencies
+      - name: Install `${{ needs.vars.outputs.package }}-lib` and its dependencies
         run: raco pkg install --auto --no-docs --batch --link "./${{ needs.vars.outputs.package }}-lib/"
       - name: Install `${{ needs.vars.outputs.package }}-doc` and its dependencies
         run: raco pkg install --auto --no-docs --batch --link "./${{ needs.vars.outputs.package }}-doc/"
@@ -96,13 +103,13 @@ jobs:
         run: raco pkg install --auto --no-docs --batch --link "./${{ needs.vars.outputs.package }}-test/"
       - name: Install `${{ needs.vars.outputs.package }}` and its dependencies
         run: raco pkg install --auto --no-docs --batch --link "./${{ needs.vars.outputs.package }}/"
-
+      
       # We recompile the collection (the single collection which all
       # these packages populate) and check that the package
       # dependencies declared in each info.rkt are correct.
       - name: Recompile to check dependencies, and build documentation
         run: raco setup --check-pkg-deps --unused-pkg-deps "${{ needs.vars.outputs.package }}"
-
+      
       # We run tests according to the way the DrDr continuous testing
       # system does. This imitates the settings used by the Racket
       # package index at <https://pkgs.racket-lang.org/>.
